@@ -31,8 +31,30 @@ import '../track/remote/video.dart';
 import '../types/other.dart';
 import 'participant.dart';
 
+enum SipCallStatus { talking, incoming, ringing, hangup, none }
+
+SipCallStatus sipCallStatusFromString(
+    String string, SipCallStatus previousValue) {
+  switch (string) {
+    case 'dialing':
+      return SipCallStatus.ringing;
+    case 'ringing':
+      return previousValue != SipCallStatus.ringing
+          ? SipCallStatus.incoming
+          : SipCallStatus.ringing;
+    case 'hangup':
+      return SipCallStatus.hangup;
+    case 'active':
+      return SipCallStatus.talking;
+    default:
+      return SipCallStatus.none;
+  }
+}
+
 /// Represents other participant in the [Room].
 class RemoteParticipant extends Participant<RemoteTrackPublication> {
+  SipCallStatus sipCallStatus = SipCallStatus.none;
+
   @internal
   RemoteParticipant({
     required Room room,
@@ -195,6 +217,10 @@ class RemoteParticipant extends Participant<RemoteTrackPublication> {
   @internal
   Future<bool> updateFromInfo(lk_models.ParticipantInfo info) async {
     logger.fine('RemoteParticipant.updateFromInfo(info: $info)');
+
+    sipCallStatus = sipCallStatusFromString(
+        info.attributes['sip.callStatus'] ?? '', sipCallStatus);
+
     if (!await super.updateFromInfo(info)) {
       //return false;
     }

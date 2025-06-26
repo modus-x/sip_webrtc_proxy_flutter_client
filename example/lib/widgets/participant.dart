@@ -11,7 +11,9 @@ import 'participant_stats.dart';
 abstract class ParticipantWidget extends StatefulWidget {
   // Convenience method to return relevant widget for participant
   static ParticipantWidget widgetFor(ParticipantTrack participantTrack,
-      {bool showStatsLayer = false}) {
+      {bool showStatsLayer = false,
+      Function(SipCallStatus status)? answer,
+      Function(SipCallStatus status)? hangup}) {
     if (participantTrack.participant is LocalParticipant) {
       return LocalParticipantWidget(
           participantTrack.participant as LocalParticipant,
@@ -21,7 +23,9 @@ abstract class ParticipantWidget extends StatefulWidget {
       return RemoteParticipantWidget(
           participantTrack.participant as RemoteParticipant,
           participantTrack.type,
-          showStatsLayer);
+          showStatsLayer,
+          answer: answer,
+          hangup: hangup);
     }
     throw UnimplementedError('Unknown participant type');
   }
@@ -65,10 +69,15 @@ class RemoteParticipantWidget extends ParticipantWidget {
   @override
   final bool showStatsLayer;
 
+  final Function(SipCallStatus status)? answer;
+  final Function(SipCallStatus status)? hangup;
+
   const RemoteParticipantWidget(
     this.participant,
     this.type,
     this.showStatsLayer, {
+    this.answer,
+    this.hangup,
     super.key,
   });
 
@@ -85,6 +94,8 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
   TrackPublication? get audioPublication;
   bool get isScreenShare => widget.type == ParticipantTrackType.kScreenShare;
   EventsListener<ParticipantEvent>? _listener;
+
+  bool out = false;
 
   @override
   void initState() {
@@ -123,62 +134,106 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
   List<Widget> extraWidgets(bool isScreenShare) => [];
 
   @override
-  Widget build(BuildContext ctx) => Container(
-        foregroundDecoration: BoxDecoration(
-          border: widget.participant.isSpeaking && !isScreenShare
-              ? Border.all(
-                  width: 5,
-                  color: LKColors.lkBlue,
-                )
-              : null,
-        ),
-        decoration: BoxDecoration(
-          color: Theme.of(ctx).cardColor,
-        ),
-        child: Stack(
-          children: [
-            // Video
-            InkWell(
-              onTap: () => setState(() => _visible = !_visible),
-              child: activeVideoTrack != null && !activeVideoTrack!.muted
-                  ? VideoTrackRenderer(
-                      renderMode: VideoRenderMode.auto,
-                      activeVideoTrack!,
-                      fit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
-                    )
-                  : const NoVideoWidget(),
-            ),
-            // Bottom bar
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ...extraWidgets(isScreenShare),
-                  ParticipantInfoWidget(
-                    title: widget.participant.name.isNotEmpty
-                        ? '${widget.participant.name} (${widget.participant.identity})'
-                        : widget.participant.identity,
-                    audioAvailable: audioPublication?.muted == false &&
-                        audioPublication?.subscribed == true,
-                    connectionQuality: widget.participant.connectionQuality,
-                    isScreenShare: isScreenShare,
-                    enabledE2EE: widget.participant.isEncrypted,
+  Widget build(BuildContext ctx) {
+    SipCallStatus sipCallStatus = SipCallStatus.none;
+
+    if (widget.participant is RemoteParticipant) {
+      sipCallStatus = (widget.participant as RemoteParticipant).sipCallStatus;
+    }
+
+    return Container(
+      foregroundDecoration: BoxDecoration(
+        border: widget.participant.isSpeaking && !isScreenShare
+            ? Border.all(
+                width: 5,
+                color: LKColors.lkBlue,
+              )
+            : null,
+      ),
+      decoration: BoxDecoration(
+        color: Theme.of(ctx).cardColor,
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Video
+          InkWell(
+            onTap: () => setState(() => _visible = !_visible),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: activeVideoTrack != null && !activeVideoTrack!.muted
+                      ? VideoTrackRenderer(
+                          renderMode: VideoRenderMode.auto,
+                          activeVideoTrack!,
+                          fit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                        )
+                      : const NoVideoWidget(),
+                ),
+                // SIP state
+                if (sipCallStatus == SipCallStatus.ringing ||
+                    sipCallStatus == SipCallStatus.incoming)
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          sipCallStatus == SipCallStatus.incoming
+                              ? 'Входящий вызов'
+                              : 'Исходящий вызов',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        const SizedBox(
+                          height: 15,
+                        ),
+                        const SizedBox(
+                          height: 50,
+                          width: 50,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                          ),
+                        )
+                      ],
+                    ),
                   ),
-                ],
-              ),
+              ],
             ),
-            if (widget.showStatsLayer)
-              Positioned(
-                  top: 130,
-                  right: 30,
-                  child: ParticipantStatsWidget(
-                    participant: widget.participant,
-                  )),
-          ],
-        ),
-      );
+          ),
+          // Bottom bar
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ...extraWidgets(isScreenShare),
+                ParticipantInfoWidget(
+                  title: widget.participant.name.isNotEmpty
+                      ? '${widget.participant.name} (${widget.participant.identity})'
+                      : widget.participant.identity,
+                  audioAvailable: audioPublication?.muted == false &&
+                      audioPublication?.subscribed == true,
+                  connectionQuality: widget.participant.connectionQuality,
+                  isScreenShare: isScreenShare,
+                  enabledE2EE: widget.participant.isEncrypted,
+                ),
+              ],
+            ),
+          ),
+
+          if (widget.showStatsLayer)
+            Positioned(
+                top: 130,
+                right: 30,
+                child: ParticipantStatsWidget(
+                  participant: widget.participant,
+                )),
+        ],
+      ),
+    );
+  }
 }
 
 class _LocalParticipantWidgetState
@@ -223,36 +278,69 @@ class _RemoteParticipantWidgetState
   AudioTrack? get activeAudioTrack => audioPublication?.track;
 
   @override
-  List<Widget> extraWidgets(bool isScreenShare) => [
-        Row(
-          mainAxisSize: MainAxisSize.max,
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            // Menu for RemoteTrackPublication<RemoteAudioTrack>
-            if (audioPublication != null)
-              RemoteTrackPublicationMenuWidget(
-                pub: audioPublication!,
-                icon: Icons.volume_up,
-              ),
-            // Menu for RemoteTrackPublication<RemoteVideoTrack>
-            if (videoPublication != null)
-              RemoteTrackPublicationMenuWidget(
-                pub: videoPublication!,
-                icon: isScreenShare ? Icons.monitor : Icons.videocam,
-              ),
-            if (videoPublication != null)
-              RemoteTrackFPSMenuWidget(
-                pub: videoPublication!,
-                icon: Icons.menu,
-              ),
-            if (videoPublication != null)
-              RemoteTrackQualityMenuWidget(
-                pub: videoPublication!,
-                icon: Icons.monitor_outlined,
-              ),
-          ],
-        ),
-      ];
+  List<Widget> extraWidgets(bool isScreenShare) {
+    List<Widget> widgets = [
+      Row(
+        mainAxisSize: MainAxisSize.max,
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          // Menu for RemoteTrackPublication<RemoteAudioTrack>
+          if (audioPublication != null)
+            RemoteTrackPublicationMenuWidget(
+              pub: audioPublication!,
+              icon: Icons.volume_up,
+            ),
+          // Menu for RemoteTrackPublication<RemoteVideoTrack>
+          if (videoPublication != null)
+            RemoteTrackPublicationMenuWidget(
+              pub: videoPublication!,
+              icon: isScreenShare ? Icons.monitor : Icons.videocam,
+            ),
+          if (videoPublication != null)
+            RemoteTrackFPSMenuWidget(
+              pub: videoPublication!,
+              icon: Icons.menu,
+            ),
+          if (videoPublication != null)
+            RemoteTrackQualityMenuWidget(
+              pub: videoPublication!,
+              icon: Icons.monitor_outlined,
+            ),
+        ],
+      ),
+    ];
+
+    var sipCallStatus = widget.participant.sipCallStatus;
+
+    // incoming, add answer button
+    if (sipCallStatus == SipCallStatus.incoming) {
+      widgets.add(
+        Padding(
+            padding: const EdgeInsets.all(4.0),
+            child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                onPressed: () {
+                  widget.answer?.call(sipCallStatus);
+                },
+                child: const FittedBox(child: Text('Принять')))),
+      );
+    } else if ([
+      SipCallStatus.incoming,
+      SipCallStatus.ringing,
+      SipCallStatus.talking
+    ].contains(sipCallStatus)) {
+      widgets.add(Padding(
+        padding: const EdgeInsets.all(4.0),
+        child: ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              widget.hangup?.call(sipCallStatus);
+            },
+            child: const FittedBox(child: Text('Завершить'))),
+      ));
+    }
+    return widgets;
+  }
 }
 
 class RemoteTrackPublicationMenuWidget extends StatelessWidget {

@@ -175,17 +175,10 @@ class _PreJoinPageState extends State<PreJoinPage> {
         maxFramerate: 15,
       );
 
-      E2EEOptions? e2eeOptions;
-      if (args.e2ee && args.e2eeKey != null) {
-        final keyProvider = await BaseKeyProvider.create();
-        e2eeOptions = E2EEOptions(keyProvider: keyProvider);
-        await keyProvider.setKey(args.e2eeKey!);
-      }
-
       final room = Room(
         roomOptions: RoomOptions(
-          adaptiveStream: args.adaptiveStream,
-          dynacast: args.dynacast,
+          adaptiveStream: false,
+          dynacast: false,
           defaultAudioPublishOptions: const AudioPublishOptions(
             name: 'custom_audio_track_name',
           ),
@@ -200,15 +193,15 @@ class _PreJoinPageState extends State<PreJoinPage> {
                 dimensions: VideoDimensionsPresets.h1080_169,
               )),
           defaultVideoPublishOptions: VideoPublishOptions(
-            simulcast: args.simulcast,
-            videoCodec: args.preferredCodec,
-            backupVideoCodec: BackupVideoCodec(
-              enabled: args.enableBackupVideoCodec,
+            name: 'custom_video_track_name',
+            simulcast: false,
+            videoCodec: 'H264',
+            backupVideoCodec: const BackupVideoCodec(
+              enabled: false,
             ),
             videoEncoding: cameraEncoding,
             screenShareEncoding: screenEncoding,
           ),
-          e2eeOptions: e2eeOptions,
         ),
       );
       // Create a Listener before connecting
@@ -252,7 +245,7 @@ class _PreJoinPageState extends State<PreJoinPage> {
     return Scaffold(
         appBar: AppBar(
           title: const Text(
-            'Select Devices',
+            'Настройка устройств',
             style: TextStyle(
               color: Colors.white,
             ),
@@ -421,9 +414,9 @@ class _PreJoinPageState extends State<PreJoinPage> {
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton2<MediaDevice>(
                           isExpanded: true,
-                          disabledHint: const Text('Disable Microphone'),
+                          disabledHint: const Text('Микрофон выключен'),
                           hint: const Text(
-                            'Select Micriphone',
+                            'Выберите микрофон',
                           ),
                           items: _enableAudio
                               ? _audioInputs
@@ -475,7 +468,7 @@ class _PreJoinPageState extends State<PreJoinPage> {
                                 ),
                               ),
                             ),
-                          const Text('JOIN'),
+                          const Text('Завершить настройку устройств'),
                         ],
                       ),
                     ),

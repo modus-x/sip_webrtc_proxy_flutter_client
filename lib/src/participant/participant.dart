@@ -176,6 +176,17 @@ abstract class Participant<T extends TrackPublication>
     }
   }
 
+  void _setInfo(lk_models.ParticipantInfo info) {
+    final changed = _participantInfo != info;
+    _participantInfo = info;
+    if (changed) {
+      [events, room.events].emit(ParticipantInfoUpdatedEvent(
+        participant: this,
+        info: info,
+      ));
+    }
+  }
+
   void _setAttributes(Map<String, String> attrs) {
     final diff = mapDiff(_attributes, attrs)
         .map((k, v) => MapEntry(k as String, v as String));
@@ -216,7 +227,7 @@ abstract class Participant<T extends TrackPublication>
     }
 
     _setAttributes(info.attributes);
-    _participantInfo = info;
+    _setInfo(info);
     setPermissions(info.permission.toLKType());
 
     return true;

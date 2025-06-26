@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:livekit_client/livekit_client.dart';
+import 'package:livekit_example/config.dart';
 import 'package:livekit_example/method_channels/replay_kit_channel.dart';
 
 import '../exts.dart';
@@ -11,6 +13,8 @@ import '../utils.dart';
 import '../widgets/controls.dart';
 import '../widgets/participant.dart';
 import '../widgets/participant_info.dart';
+
+import 'package:http/http.dart' as http;
 
 class RoomPage extends StatefulWidget {
   final Room room;
@@ -27,10 +31,15 @@ class RoomPage extends StatefulWidget {
 }
 
 class _RoomPageState extends State<RoomPage> {
-  List<ParticipantTrack> participantTracks = [];
+  List<ParticipantTrack> remotePatricipantTracks = [];
+  ParticipantTrack? localPatricipantTrack;
+
   EventsListener<RoomEvent> get _listener => widget.listener;
   bool get fastConnection => widget.room.engine.fastConnectOptions != null;
   bool _flagStartedReplayKit = false;
+
+  final _number = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -89,6 +98,9 @@ class _RoomPageState extends State<RoomPage> {
     ..on<ParticipantEvent>((event) {
       // sort participants on many track events as noted in documentation linked above
       _sortParticipants();
+    })
+    ..on<ParticipantInfoUpdatedEvent>((event) {
+      print('ParticipantInfoUpdatedEvent attributes: ${event.info.attributes}');
     })
     ..on<RoomRecordingStatusChanged>((event) {
       context.showRecordingStatusChangedDialog(event.activeRecording);
@@ -164,22 +176,16 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   void _sortParticipants() {
-    List<ParticipantTrack> userMediaTracks = [];
+    List<ParticipantTrack> remoteMediaTracks = [];
     List<ParticipantTrack> screenTracks = [];
+
     for (var participant in widget.room.remoteParticipants.values) {
-      for (var t in participant.videoTrackPublications) {
-        if (t.isScreenShare) {
-          screenTracks.add(ParticipantTrack(
-            participant: participant,
-            type: ParticipantTrackType.kScreenShare,
-          ));
-        } else {
-          userMediaTracks.add(ParticipantTrack(participant: participant));
-        }
+      if (participant.kind != ParticipantKind.AGENT) {
+        remoteMediaTracks.add(ParticipantTrack(participant: participant));
       }
     }
     // sort speakers for the grid
-    userMediaTracks.sort((a, b) {
+    remoteMediaTracks.sort((a, b) {
       // loudest speaker first
       if (a.participant.isSpeaking && b.participant.isSpeaking) {
         if (a.participant.audioLevel > b.participant.audioLevel) {
@@ -207,6 +213,10 @@ class _RoomPageState extends State<RoomPage> {
           b.participant.joinedAt.millisecondsSinceEpoch;
     });
 
+    setState(() {
+      remotePatricipantTracks = remoteMediaTracks;
+    });
+
     final localParticipantTracks =
         widget.room.localParticipant?.videoTrackPublications;
     if (localParticipantTracks != null) {
@@ -232,52 +242,160 @@ class _RoomPageState extends State<RoomPage> {
             }
           }
 
-          userMediaTracks.add(
-              ParticipantTrack(participant: widget.room.localParticipant!));
+          setState(() {
+            localPatricipantTrack =
+                ParticipantTrack(participant: widget.room.localParticipant!);
+          });
+          break;
         }
       }
     }
-    setState(() {
-      participantTracks = [...screenTracks, ...userMediaTracks];
-    });
+  }
+
+  Future<Map<String, dynamic>> _call() async {
+    try {
+      var name = widget.room.localParticipant?.attributes['sip_username'];
+      if (name != null) {
+        var request = livekitServerSdk.replace(
+            path: '/server_sdk/make_call',
+            queryParameters: {'number': _number.text, 'username': name});
+        final response = await http.get(request);
+
+        if (response.statusCode == 200) {
+          return json.decode(response.body);
+        } else {
+          throw Exception('Failed to generate token: ${response.body}');
+        }
+      }
+      throw Exception('no sip username...');
+    } catch (e) {
+      throw Exception('Failed to generate token: $e');
+    }
+  }
+
+  void _onTapDisconnect() async {
+    final result = await context.showDisconnectDialog();
+    if (result == true) await widget.room.disconnect();
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        body: Stack(
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          title: const Text('СВЕТЕЦ демо'),
+        ),
+        body: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Column(
-              children: [
-                Expanded(
-                    child: participantTracks.isNotEmpty
-                        ? ParticipantWidget.widgetFor(participantTracks.first,
-                            showStatsLayer: true)
-                        : Container()),
-                if (widget.room.localParticipant != null)
-                  SafeArea(
-                    top: false,
-                    child: ControlsWidget(
-                        widget.room, widget.room.localParticipant!),
-                  )
-              ],
-            ),
-            Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                child: SizedBox(
-                  height: 120,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: math.max(0, participantTracks.length - 1),
-                    itemBuilder: (BuildContext context, int index) => SizedBox(
-                      width: 180,
-                      height: 120,
-                      child: ParticipantWidget.widgetFor(
-                          participantTracks[index + 1]),
+            Expanded(
+                child: remotePatricipantTracks.isNotEmpty
+                    ? Row(
+                        children: [
+                          Expanded(
+                            child: ParticipantWidget.widgetFor(
+                                localPatricipantTrack!,
+                                showStatsLayer: true),
+                          ),
+                          Expanded(
+                            child: ParticipantWidget.widgetFor(
+                                remotePatricipantTracks.first,
+                                showStatsLayer: true, answer: (SipCallStatus _) {
+                              Map<String, String> current = {};
+                              current['sip_action'] = 'answer';
+                              widget.room.localParticipant
+                                  ?.setAttributes(current);
+                              current['sip_action'] = '';
+                              widget.room.localParticipant
+                                  ?.setAttributes(current);
+                            }, hangup: (SipCallStatus sipCallStatus) {
+                              Map<String, String> current = {};
+                              current['sip_action'] =
+                                  sipCallStatus == SipCallStatus.incoming
+                                      ? 'decline'
+                                      : 'hangup';
+                              widget.room.localParticipant
+                                  ?.setAttributes(current);
+                              current['sip_action'] = '';
+                              widget.room.localParticipant
+                                  ?.setAttributes(current);
+                            }),
+                          ),
+                        ],
+                      )
+                    : Center(
+                        child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints.expand(),
+                                child: SvgPicture.asset(
+                                  'images/master_logo.svg', // Path from your `pubspec.yaml`
+                                  fit: BoxFit.contain,
+                                  color: const Color.fromARGB(255, 3, 67,
+                                      226), // Change the color of the SVG
+                                ),
+                              ),
+                            ),
+                          ),
+                          const Expanded(
+                            flex: 5,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text('Введите номер в формате'),
+                                Text(
+                                  '+7XXXXXXXXXX',
+                                  style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                                Text('*без пробелов и других символов*'),
+                                Text('и нажмите кнопку "Позвонить"'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ))),
+            SizedBox(
+              height: 50,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 200,
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        focusedBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.blue)),
+                        enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.white)),
+                        labelText: 'Номер',
+                      ),
+                      controller: _number,
                     ),
                   ),
-                )),
+                  Padding(
+                    padding: const EdgeInsets.all(4.0),
+                    child: ElevatedButton(
+                        onPressed: () {
+                          var result = _call();
+                          print('call result: $result');
+                        },
+                        child: const FittedBox(child: Text('Позвонить!'))),
+                  ),
+                ],
+              ),
+            ),
+            if (widget.room.localParticipant != null)
+              SafeArea(
+                top: false,
+                child:
+                    ControlsWidget(widget.room, widget.room.localParticipant!),
+              )
           ],
         ),
       );

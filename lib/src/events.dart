@@ -25,6 +25,7 @@ import 'stats/stats.dart';
 import 'track/track.dart';
 import 'types/other.dart';
 import 'types/participant_permissions.dart';
+import 'proto/livekit_models.pb.dart' as lk_models;
 
 /// Base type for all LiveKit events.
 mixin LiveKitEvent {}
@@ -364,6 +365,18 @@ class ParticipantMetadataUpdatedEvent with RoomEvent, ParticipantEvent {
   const ParticipantMetadataUpdatedEvent({
     required this.participant,
     required this.metadata,
+  });
+
+  @override
+  String toString() => '${runtimeType}(participant: ${participant})';
+}
+
+class ParticipantInfoUpdatedEvent with RoomEvent, ParticipantEvent {
+  final Participant participant;
+  final lk_models.ParticipantInfo info;
+  const ParticipantInfoUpdatedEvent({
+    required this.participant,
+    required this.info,
   });
 
   @override
