@@ -26,6 +26,7 @@ dependencies:
 
   livekit_client:
     path: ../
+  package_info_plus: ^8.3.0
 
 dev_dependencies:
   flutter_test:
@@ -38,5 +39,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - images/logo-dark.svg
-    - images/master_logo.svg
+    - images/

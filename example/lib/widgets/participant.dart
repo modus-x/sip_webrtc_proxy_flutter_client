@@ -1,12 +1,11 @@
+import 'dart:async';
+
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:flutter_svg/svg.dart';
 import 'package:livekit_client/livekit_client.dart';
-import 'package:livekit_example/theme.dart';
 
-import 'no_video.dart';
 import 'participant_info.dart';
-import 'participant_stats.dart';
 
 abstract class ParticipantWidget extends StatefulWidget {
   // Convenience method to return relevant widget for participant
@@ -87,7 +86,6 @@ class RemoteParticipantWidget extends ParticipantWidget {
 
 abstract class _ParticipantWidgetState<T extends ParticipantWidget>
     extends State<T> {
-  bool _visible = true;
   VideoTrack? get activeVideoTrack;
   AudioTrack? get activeAudioTrack;
   TrackPublication? get videoPublication;
@@ -96,6 +94,8 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
   EventsListener<ParticipantEvent>? _listener;
 
   bool out = false;
+
+  Timer? _ticker;
 
   @override
   void initState() {
@@ -109,12 +109,27 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
 
     widget.participant.addListener(_onParticipantChanged);
     _onParticipantChanged();
+
+    // fire every second
+
+    var participant = widget.participant;
+    if (participant is RemoteParticipant) {
+      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+        // If the widget is gone, or we’re not talking, do nothing.
+        if (!mounted || participant.sipCallStatus != SipCallStatus.talking) {
+          return;
+        }
+
+        setState(() {}); // rebuild → _timerText() regenerates
+      });
+    }
   }
 
   @override
   void dispose() {
     widget.participant.removeListener(_onParticipantChanged);
     _listener?.dispose();
+    _ticker?.cancel(); 
     super.dispose();
   }
 
@@ -135,104 +150,43 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
 
   @override
   Widget build(BuildContext ctx) {
-    SipCallStatus sipCallStatus = SipCallStatus.none;
-
     if (widget.participant is RemoteParticipant) {
-      sipCallStatus = (widget.participant as RemoteParticipant).sipCallStatus;
+      SipCallStatus sip =
+          (widget.participant as RemoteParticipant).sipCallStatus;
+      // ── 1) If we are in a special SIP state, show the big card ──────────────
+      if (sip == SipCallStatus.ringing ||
+          sip == SipCallStatus.incoming ||
+          sip == SipCallStatus.talking) {
+        String? subtitle;
+        if (sip == SipCallStatus.ringing) subtitle = 'Идет вызов…';
+        if (sip == SipCallStatus.incoming) subtitle = 'Входящий вызов';
+        if (sip == SipCallStatus.talking) subtitle = _timerText(); // hh:mm:ss
+
+        return Center(
+          child: _CallStatusCard(
+            status: sip,
+            title: widget.participant.identity,
+            subtitle: subtitle,
+            onAnswer: sip == SipCallStatus.incoming
+                ? () => (widget as RemoteParticipantWidget).answer?.call(sip)
+                : null,
+            onHangup: () =>
+                (widget as RemoteParticipantWidget).hangup?.call(sip),
+          ),
+        );
+      }
     }
 
-    return Container(
-      foregroundDecoration: BoxDecoration(
-        border: widget.participant.isSpeaking && !isScreenShare
-            ? Border.all(
-                width: 5,
-                color: LKColors.lkBlue,
-              )
-            : null,
-      ),
-      decoration: BoxDecoration(
-        color: Theme.of(ctx).cardColor,
-      ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Video
-          InkWell(
-            onTap: () => setState(() => _visible = !_visible),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Flexible(
-                  child: activeVideoTrack != null && !activeVideoTrack!.muted
-                      ? VideoTrackRenderer(
-                          renderMode: VideoRenderMode.auto,
-                          activeVideoTrack!,
-                          fit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
-                        )
-                      : const NoVideoWidget(),
-                ),
-                // SIP state
-                if (sipCallStatus == SipCallStatus.ringing ||
-                    sipCallStatus == SipCallStatus.incoming)
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          sipCallStatus == SipCallStatus.incoming
-                              ? 'Входящий вызов'
-                              : 'Исходящий вызов',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                        const SizedBox(
-                          height: 15,
-                        ),
-                        const SizedBox(
-                          height: 50,
-                          width: 50,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                          ),
-                        )
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          // Bottom bar
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ...extraWidgets(isScreenShare),
-                ParticipantInfoWidget(
-                  title: widget.participant.name.isNotEmpty
-                      ? '${widget.participant.name} (${widget.participant.identity})'
-                      : widget.participant.identity,
-                  audioAvailable: audioPublication?.muted == false &&
-                      audioPublication?.subscribed == true,
-                  connectionQuality: widget.participant.connectionQuality,
-                  isScreenShare: isScreenShare,
-                  enabledE2EE: widget.participant.isEncrypted,
-                ),
-              ],
-            ),
-          ),
+    return Container();
+  }
 
-          if (widget.showStatsLayer)
-            Positioned(
-                top: 130,
-                right: 30,
-                child: ParticipantStatsWidget(
-                  participant: widget.participant,
-                )),
-        ],
-      ),
-    );
+// very small helper to format the call duration (keeps old logic intact)
+  String _timerText() {
+    final secs =
+        widget.participant.joinedAt.difference(DateTime.now()).inSeconds.abs();
+    final m = (secs ~/ 60).toString().padLeft(2, '0');
+    final s = (secs % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 }
 
@@ -309,36 +263,6 @@ class _RemoteParticipantWidgetState
         ],
       ),
     ];
-
-    var sipCallStatus = widget.participant.sipCallStatus;
-
-    // incoming, add answer button
-    if (sipCallStatus == SipCallStatus.incoming) {
-      widgets.add(
-        Padding(
-            padding: const EdgeInsets.all(4.0),
-            child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                onPressed: () {
-                  widget.answer?.call(sipCallStatus);
-                },
-                child: const FittedBox(child: Text('Принять')))),
-      );
-    } else if ([
-      SipCallStatus.incoming,
-      SipCallStatus.ringing,
-      SipCallStatus.talking
-    ].contains(sipCallStatus)) {
-      widgets.add(Padding(
-        padding: const EdgeInsets.all(4.0),
-        child: ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              widget.hangup?.call(sipCallStatus);
-            },
-            child: const FittedBox(child: Text('Завершить'))),
-      ));
-    }
     return widgets;
   }
 }
@@ -447,4 +371,172 @@ class RemoteTrackQualityMenuWidget extends StatelessWidget {
           ],
         ),
       );
+}
+
+// ============================================================================
+// A small, self-contained card that shows the three call states you provided.
+// ============================================================================
+class _CallStatusCard extends StatefulWidget {
+  final SipCallStatus status;
+  final String title; // number or name
+  final String? subtitle; // "Идет вызов…", timer, etc.
+  final VoidCallback? onAnswer;
+  final VoidCallback? onHangup;
+
+  const _CallStatusCard({
+    required this.status,
+    required this.title,
+    this.subtitle,
+    this.onAnswer,
+    this.onHangup,
+  });
+
+  @override
+  State<_CallStatusCard> createState() => _CallStatusCardState();
+}
+
+class _CallStatusCardState extends State<_CallStatusCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 2),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  // coloured main circle + animated ripples
+  Widget _buildAvatar(Color colour, IconData icon) {
+    return SizedBox(
+      width: 140,
+      height: 140,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // 3 concentric animated rings
+          for (int i = 3; i >= 1; i--)
+            AnimatedBuilder(
+              animation: _ctrl,
+              builder: (_, __) {
+                final progress = (_ctrl.value + (i * .2)) % 1;
+                return Container(
+                  width: 140 * progress,
+                  height: 140 * progress,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: colour.withOpacity(1 - progress),
+                  ),
+                );
+              },
+            ),
+          // solid middle
+          Container(
+            width: 100,
+            height: 100,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: colour,
+            ),
+            child: Icon(icon, size: 40, color: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // decide visuals based on state
+    late final Color mainClr;
+    late final IconData avatarIcon;
+    switch (widget.status) {
+      case SipCallStatus.ringing:
+        mainClr = const Color(0xFF2FA5F9);
+        avatarIcon = Icons.call_made_rounded;
+        break;
+      case SipCallStatus.talking:
+        mainClr = const Color(0xFF2FA5F9);
+        avatarIcon = Icons.person;
+        break;
+      case SipCallStatus.incoming:
+        mainClr = const Color(0xFF4CAF50);
+        avatarIcon = Icons.call_received_rounded;
+        break;
+      default:
+        mainClr = Colors.grey;
+        avatarIcon = Icons.call;
+    }
+
+    // bottom buttons
+    List<Widget> buttons;
+    if (widget.status == SipCallStatus.incoming) {
+      buttons = [
+        _circButton(
+            colour: const Color(0xFF4CAF50),
+            iconPath: 'images/call_audio.svg',
+            onTap: widget.onAnswer),
+        const SizedBox(width: 40),
+        _circButton(
+            colour: const Color(0xFFF44336),
+            iconPath: 'images/call_hangup.svg',
+            onTap: widget.onHangup),
+      ];
+    } else {
+      buttons = [
+        _circButton(
+            colour: const Color(0xFFF44336),
+            iconPath: 'images/call_hangup.svg',
+            onTap: widget.onHangup),
+      ];
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildAvatar(mainClr, avatarIcon),
+          const SizedBox(height: 24),
+          Text(widget.title,
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          if (widget.subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(widget.subtitle!,
+                style: const TextStyle(fontSize: 14, color: Color(0xFF8F9CA9))),
+          ],
+          const SizedBox(height: 48),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: buttons,
+          ),
+          if (widget.status != SipCallStatus.incoming) ...[
+            const SizedBox(height: 8),
+            Text('Завершить', style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // helper to make a coloured circular button
+  Widget _circButton(
+      {required Color colour, required String iconPath, VoidCallback? onTap}) {
+    return SizedBox(
+      width: 72,
+      height: 72,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          shape: const CircleBorder(),
+          backgroundColor: colour,
+        ),
+        child: SvgPicture.asset(iconPath, height: 30, color: Colors.white),
+      ),
+    );
+  }
 }

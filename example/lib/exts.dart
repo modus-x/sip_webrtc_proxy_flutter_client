@@ -5,16 +5,16 @@ extension LKExampleExt on BuildContext {
   Future<bool?> showPublishDialog() => showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Publish'),
-          content: const Text('Would you like to publish your Camera & Mic ?'),
+          title: const Text('Опубликовать'),
+          content: const Text('Вы хотите опубликовать свою камеру и микрофон?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('NO'),
+              child: const Text('НЕТ'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('YES'),
+              child: const Text('ДА'),
             ),
           ],
         ),
@@ -23,17 +23,17 @@ extension LKExampleExt on BuildContext {
   Future<bool?> showPlayAudioManuallyDialog() => showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Play Audio'),
+          title: const Text('Воспроизвести аудио'),
           content: const Text(
-              'You need to manually activate audio PlayBack for iOS Safari !'),
+              'Необходимо вручную активировать воспроизведение аудио в Safari на iOS!'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Ignore'),
+              child: const Text('Игнорировать'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Play Audio'),
+              child: const Text('Воспроизвести'),
             ),
           ],
         ),
@@ -42,31 +42,34 @@ extension LKExampleExt on BuildContext {
   Future<bool?> showUnPublishDialog() => showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('UnPublish'),
+          title: const Text('Отменить публикацию'),
           content:
-              const Text('Would you like to un-publish your Camera & Mic ?'),
+              const Text('Вы хотите отключить публикацию камеры и микрофона?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('NO'),
+              child: const Text('НЕТ'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('YES'),
+              child: const Text('ДА'),
             ),
           ],
         ),
       );
 
-  Future<void> showErrorDialog(dynamic exception) => showDialog<void>(
+  Future<void> showErrorDialog(dynamic exception, {VoidCallback? onPressed}) => showDialog<void>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Error'),
+          title: const Text('Ошибка'),
           content: Text(exception.toString()),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('OK'),
+              onPressed: () {
+                onPressed?.call();
+                Navigator.pop(ctx);
+              },
+              child: const Text('ОК'),
             )
           ],
         ),
@@ -75,16 +78,16 @@ extension LKExampleExt on BuildContext {
   Future<bool?> showDisconnectDialog() => showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Disconnect'),
-          content: const Text('Are you sure to disconnect?'),
+          title: const Text('Отключиться'),
+          content: const Text('Вы уверены, что хотите отключиться?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
+              child: const Text('Отмена'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Disconnect'),
+              child: const Text('Отключиться'),
             ),
           ],
         ),
@@ -93,16 +96,16 @@ extension LKExampleExt on BuildContext {
   Future<bool?> showReconnectDialog() => showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Reconnect'),
-          content: const Text('This will force a reconnection'),
+          title: const Text('Переподключиться'),
+          content: const Text('Это принудительно пересоединит'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
+              child: const Text('Отмена'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Reconnect'),
+              child: const Text('Переподключиться'),
             ),
           ],
         ),
@@ -111,12 +114,12 @@ extension LKExampleExt on BuildContext {
   Future<void> showReconnectSuccessDialog() => showDialog<void>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Reconnect'),
-          content: const Text('Reconnection was successful.'),
+          title: const Text('Переподключиться'),
+          content: const Text('Переподключение прошло успешно.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('OK'),
+              child: const Text('ОК'),
             ),
           ],
         ),
@@ -125,17 +128,17 @@ extension LKExampleExt on BuildContext {
   Future<bool?> showSendDataDialog() => showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Send data'),
+          title: const Text('Отправить данные'),
           content: const Text(
-              'This will send a sample data to all participants in the room'),
+              'Это отправит пример данных всем участникам в комнате'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
+              child: const Text('Отмена'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Send'),
+              child: const Text('Отправить'),
             ),
           ],
         ),
@@ -144,12 +147,12 @@ extension LKExampleExt on BuildContext {
   Future<bool?> showDataReceivedDialog(String data) => showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Received data'),
+          title: const Text('Полученные данные'),
           content: Text(data),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('OK'),
+              child: const Text('ОК'),
             ),
           ],
         ),
@@ -159,14 +162,14 @@ extension LKExampleExt on BuildContext {
       showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Room recording reminder'),
+          title: const Text('Напоминание о записи комнаты'),
           content: Text(isActiveRecording
-              ? 'Room recording is active.'
-              : 'Room recording is stoped.'),
+              ? 'Запись комнаты активна.'
+              : 'Запись комнаты остановлена.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('OK'),
+              child: const Text('ОК'),
             ),
           ],
         ),
@@ -175,17 +178,17 @@ extension LKExampleExt on BuildContext {
   Future<bool?> showSubscribePermissionDialog() => showDialog<bool>(
         context: this,
         builder: (ctx) => AlertDialog(
-          title: const Text('Allow subscription'),
+          title: const Text('Разрешить подписку'),
           content: const Text(
-              'Allow all participants to subscribe tracks published by local participant?'),
+              'Разрешить всем участникам подписываться на дорожки, опубликованные локальным участником?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('NO'),
+              child: const Text('НЕТ'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('YES'),
+              child: const Text('ДА'),
             ),
           ],
         ),
@@ -195,7 +198,7 @@ extension LKExampleExt on BuildContext {
       showDialog<SimulateScenarioResult>(
         context: this,
         builder: (ctx) => SimpleDialog(
-          title: const Text('Simulate Scenario'),
+          title: const Text('Симуляция сценария'),
           children: SimulateScenarioResult.values
               .map((e) => SimpleDialogOption(
                     child: Text(e.name),

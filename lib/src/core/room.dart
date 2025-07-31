@@ -595,9 +595,9 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       return;
     }
     await engine.disconnect();
-    await _engineListener.waitFor<EngineDisconnectedEvent>(
-        duration: const Duration(seconds: 10));
-    await _cleanUp();
+   await _engineListener.waitFor<EngineDisconnectedEvent>(
+       duration: const Duration(seconds: 10));
+    await _cleanUp(disposeLocalParticipant: false);
   }
 
   Future<void> setE2EEEnabled(bool enabled) async {

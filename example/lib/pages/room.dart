@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
-
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:livekit_client/livekit_client.dart';
@@ -100,7 +99,16 @@ class _RoomPageState extends State<RoomPage> {
       _sortParticipants();
     })
     ..on<ParticipantInfoUpdatedEvent>((event) {
-      print('ParticipantInfoUpdatedEvent attributes: ${event.info.attributes}');
+      var attributes2 = event.info.attributes;
+      if (attributes2.containsKey('registerCode') &&
+          attributes2['registerCode'] != '200') {
+        print('ParticipantInfoUpdatedEvent attributes: ${attributes2}');
+        context.showErrorDialog(
+            'Ошибка при SIP регистрации! Попробуйте ввести другие данные',
+            onPressed: () {
+          widget.room.disconnect();
+        });
+      } else {}
     })
     ..on<RoomRecordingStatusChanged>((event) {
       context.showRecordingStatusChangedDialog(event.activeRecording);
@@ -111,11 +119,44 @@ class _RoomPageState extends State<RoomPage> {
           '(${event.nextRetryDelaysInMs}ms delay until next attempt)');
     })
     ..on<LocalTrackSubscribedEvent>((event) {
-      print('Local track subscribed: ${event.trackSid}');
+
     })
-    ..on<LocalTrackPublishedEvent>((_) => _sortParticipants())
-    ..on<LocalTrackUnpublishedEvent>((_) => _sortParticipants())
-    ..on<TrackSubscribedEvent>((_) => _sortParticipants())
+    ..on<LocalTrackPublishedEvent>((_) {
+      _sortParticipants();
+    })
+    ..on<LocalTrackUnpublishedEvent>((_) {
+      _sortParticipants();
+    })
+    ..on<TrackSubscribedEvent>((_) {
+      _sortParticipants();
+      Hardware.instance.enumerateDevices().then((devices) async {
+
+        await widget.room.localParticipant?.setMicrophoneEnabled(false);
+        await widget.room.localParticipant?.setMicrophoneEnabled(true);
+
+        List<MediaDevice>? audioInputs;
+        List<MediaDevice>? audioOutputs;
+
+        audioInputs = devices.where((d) => d.kind == 'audioinput').toList();
+        audioOutputs = devices.where((d) => d.kind == 'audiooutput').toList();
+
+        var audioInput = audioInputs.firstWhereOrNull((device) {
+          return device.deviceId == widget.room.selectedAudioInputDeviceId;
+        });
+
+        if (audioInput != null) {
+          widget.room.setAudioInputDevice(audioInput);
+        }
+
+        var audioOutput = audioOutputs.firstWhereOrNull((device) {
+          return device.deviceId == widget.room.selectedAudioOutputDeviceId;
+        });
+
+        if (audioOutput != null) {
+          widget.room.setAudioOutputDevice(audioOutput);
+        }
+      });
+    })
     ..on<TrackUnsubscribedEvent>((_) => _sortParticipants())
     ..on<TrackE2EEStateEvent>(_onE2EEStateEvent)
     ..on<ParticipantNameUpdatedEvent>((event) {
@@ -279,124 +320,176 @@ class _RoomPageState extends State<RoomPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          title: const Text('СВЕТЕЦ демо'),
-        ),
-        body: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Expanded(
-                child: remotePatricipantTracks.isNotEmpty
-                    ? Row(
-                        children: [
-                          Expanded(
-                            child: ParticipantWidget.widgetFor(
-                                localPatricipantTrack!,
-                                showStatsLayer: true),
-                          ),
-                          Expanded(
-                            child: ParticipantWidget.widgetFor(
-                                remotePatricipantTracks.first,
-                                showStatsLayer: true, answer: (SipCallStatus _) {
-                              Map<String, String> current = {};
-                              current['sip_action'] = 'answer';
-                              widget.room.localParticipant
-                                  ?.setAttributes(current);
-                              current['sip_action'] = '';
-                              widget.room.localParticipant
-                                  ?.setAttributes(current);
-                            }, hangup: (SipCallStatus sipCallStatus) {
-                              Map<String, String> current = {};
-                              current['sip_action'] =
-                                  sipCallStatus == SipCallStatus.incoming
-                                      ? 'decline'
-                                      : 'hangup';
-                              widget.room.localParticipant
-                                  ?.setAttributes(current);
-                              current['sip_action'] = '';
-                              widget.room.localParticipant
-                                  ?.setAttributes(current);
-                            }),
-                          ),
-                        ],
-                      )
-                    : Center(
-                        child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            flex: 2,
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints.expand(),
-                                child: SvgPicture.asset(
-                                  'images/master_logo.svg', // Path from your `pubspec.yaml`
-                                  fit: BoxFit.contain,
-                                  color: const Color.fromARGB(255, 3, 67,
-                                      226), // Change the color of the SVG
-                                ),
-                              ),
-                            ),
-                          ),
-                          const Expanded(
-                            flex: 5,
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text('Введите номер в формате'),
-                                Text(
-                                  '+7XXXXXXXXXX',
-                                  style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold),
-                                ),
-                                Text('*без пробелов и других символов*'),
-                                Text('и нажмите кнопку "Позвонить"'),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ))),
-            SizedBox(
-              height: 50,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+  Widget build(BuildContext context) {
+    final localName = widget.room.localParticipant?.name ?? '';
+
+    return Scaffold(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480, maxHeight: 640),
+          child: Card(
+            color: Colors.white,
+            elevation: 0,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  SizedBox(
-                    width: 200,
-                    child: TextField(
-                      decoration: const InputDecoration(
-                        focusedBorder: OutlineInputBorder(
-                            borderSide: BorderSide(color: Colors.blue)),
-                        enabledBorder: OutlineInputBorder(
-                            borderSide: BorderSide(color: Colors.white)),
-                        labelText: 'Номер',
+                  // ── HEADER ──────────────────────────────────────────────
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        localName,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
-                      controller: _number,
-                    ),
+                      IconButton(
+                        icon: const Icon(Icons.logout),
+                        splashRadius: 20,
+                        onPressed: _onTapDisconnect, // existing logic
+                      ),
+                    ],
                   ),
-                  Padding(
-                    padding: const EdgeInsets.all(4.0),
-                    child: ElevatedButton(
-                        onPressed: () {
-                          var result = _call();
-                          print('call result: $result');
-                        },
-                        child: const FittedBox(child: Text('Позвонить!'))),
+                  const SizedBox(height: 32),
+
+                  // ── REMOTE VIDEO or PLACEHOLDER ───────────────────────
+                  Expanded(
+                    child: remotePatricipantTracks.isNotEmpty
+                        ? FittedBox(
+                            child: ParticipantWidget.widgetFor(
+                              remotePatricipantTracks.first,
+                              showStatsLayer: false,
+                              answer: (sip) {
+                                Map<String, String> cur = {
+                                  'sip_action': 'answer'
+                                };
+                                widget.room.localParticipant
+                                    ?.setAttributes(cur);
+                                widget.room.localParticipant
+                                    ?.setAttributes({'sip_action': ''});
+                              },
+                              hangup: (sip) {
+                                Map<String, String> cur = {
+                                  'sip_action': sip == SipCallStatus.incoming
+                                      ? 'decline'
+                                      : 'hangup'
+                                };
+                                widget.room.localParticipant
+                                    ?.setAttributes(cur);
+                                widget.room.localParticipant
+                                    ?.setAttributes({'sip_action': ''});
+                              },
+                            ),
+                          )
+                        : const SizedBox(), // empty area until a call starts
                   ),
+
+                  // ── NUMBER INPUT ───────────────────────────────────────
+                  if (remotePatricipantTracks.isEmpty) ...[
+                    const SizedBox(height: 32),
+                    _buildNumberInput(),
+                    const SizedBox(height: 40),
+                    Center(child: _buildCallButton()),
+                  ],
+
+                  // ── LOCAL CONTROLS (always present) ───────────────────
+                  if (widget.room.localParticipant != null) ...[
+                    const SizedBox(height: 24),
+                    ControlsWidget(widget.room, widget.room.localParticipant!),
+                  ],
                 ],
               ),
             ),
-            if (widget.room.localParticipant != null)
-              SafeArea(
-                top: false,
-                child:
-                    ControlsWidget(widget.room, widget.room.localParticipant!),
-              )
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Re-usable white 56-px input frame (same style as the login page).
+  Widget _fieldFrame({required Widget child}) => Container(
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFFDFDFDF)),
+        ),
+        child: child,
+      );
+
+// Big circular call button + caption.
+// Uses the same onPressed logic you already had.
+  Widget _buildCallButton() => ValueListenableBuilder(
+      valueListenable: _number,
+      builder: (context, _, __) {
+        return Column(
+          children: [
+            SizedBox(
+              width: 72,
+              height: 72,
+              child: ElevatedButton(
+                onPressed: _number.text.isEmpty
+                    ? null
+                    : () async {
+                        final result = await _call();
+                        print('call result: $result');
+                      },
+                style: ElevatedButton.styleFrom(
+                  shape: const CircleBorder(),
+                  backgroundColor: const Color(0xFF2FA5F9),
+                  disabledBackgroundColor: const Color(0xFFE0E0E0),
+                  elevation: 0,
+                ),
+                child: SvgPicture.asset(
+                  'images/call_audio.svg', // <- use any phone SVG you already have
+                  width: 28,
+                  height: 28,
+                  colorFilter:
+                      const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Позвонить',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _number.text.isEmpty
+                        ? Colors.grey.shade400
+                        : const Color(0xFF2FA5F9),
+                  ),
+            ),
           ],
+        );
+      });
+
+  Widget _buildNumberInput() => TextField(
+        controller: _number,
+        keyboardType: TextInputType.phone,
+        decoration: InputDecoration(
+          hintText: 'Введите номер',
+          hintStyle: const TextStyle(
+            color: Color(0xFF9C9C9C), // light-grey hint
+            fontSize: 16,
+          ),
+          filled: true,
+          fillColor: Colors.white, // keeps the inside pure white
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+
+          // grey rounded outline (identical idle & focus)
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFFDADADA), width: 1),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFFDADADA), width: 1),
+          ),
         ),
       );
 }
