@@ -2,15 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
+import 'package:livekit_example/control_room_api/api.swagger.dart';
+import 'package:livekit_example/control_room_api/control_room_api.dart';
 import 'package:livekit_example/pages/room.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'package:dropdown_button2/dropdown_button2.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:livekit_example/exts.dart';
 
-import '../config.dart';
+import '../models/sip_control.pb.dart';
 
 class ConnectPage extends StatefulWidget {
   //
@@ -25,9 +25,9 @@ class ConnectPage extends StatefulWidget {
 class _ConnectPageState extends State<ConnectPage> {
   final formKey = GlobalKey<FormState>();
 
-  final _username = TextEditingController();
-  final _password = TextEditingController();
-  final _domain = TextEditingController();
+  final _username = TextEditingController(text: "n.plaksin");
+  final _password = TextEditingController(text: "32DaBGK0");
+  final _domain = TextEditingController(text: "SMoscow007.14.rt.ru");
 
   bool _busy = false;
 
@@ -220,25 +220,72 @@ class _ConnectPageState extends State<ConnectPage> {
       );
       // Create a Listener before connecting
       final listener = room.createListener();
-      final token = (await _generateToken())['token'];
 
-      await room.prepareConnection(livekitServer, token);
+      var registerResultStream = StreamController<SipControlResponse>();
+
+      listener.on<DataReceivedEvent>((event) {
+        if (event.topic == 'sip-control') {
+          var response = SipControlResponse.fromBuffer(event.data);
+          if (response.commandId == 'register') {
+            registerResultStream.add(response);
+          }
+        }
+      });
+
+      var controlRoom = await _createSipControlRoom();
+
+      await room.prepareConnection(
+          controlRoom.livekitUrl, controlRoom.accessToken);
 
       // Try to connect to the room
       // This will throw an Exception if it fails for any reason.
       await room.connect(
-        livekitServer,
-        token,
+        controlRoom.livekitUrl,
+        controlRoom.accessToken,
         fastConnectOptions: FastConnectOptions(
           microphone: TrackOption(track: _audioTrack),
           camera: TrackOption(track: _videoTrack),
         ),
       );
 
-      await Navigator.push<void>(
-        context,
-        MaterialPageRoute(builder: (_) => RoomPage(room, listener)),
+      // TODO: remove this, await for webhook recevied
+      await Future.delayed(const Duration(seconds: 2));
+
+      // Immediately send SipRegister command upon connection
+      final sipRegisterRequest = SipRegister(
+        password: _password.text,
       );
+      final command = SipControlCommand(register: sipRegisterRequest, commandId: 'register');
+      final buffer = command.writeToBuffer();
+      final participant = room.localParticipant;
+
+
+      var registerResultFuture = registerResultStream.stream.first;
+      await participant?.publishData(
+        buffer,
+        reliable: true,
+        topic: 'sip-control',
+      );
+
+      var registerResult = await registerResultFuture;
+
+      if (registerResult.hasRegisterResult()) {
+        var result = registerResult.registerResult;
+        if (result.code == 200) {
+          // navigate to room UI
+          await Navigator.push<void>(
+            context,
+            MaterialPageRoute(builder: (_) => RoomPage(room, listener)),
+          );
+        } else {
+          await context.showErrorDialog(
+              'Cannot register: sip code ${result.code}, message ${result.message}');
+        }
+      }
+      else {
+        await context.showErrorDialog(
+            'Cannot register, internal error: ${registerResult.error}');
+      }
     } catch (error) {
       print('Could not connect $error');
       await context.showErrorDialog(error);
@@ -249,22 +296,14 @@ class _ConnectPageState extends State<ConnectPage> {
     }
   }
 
-  Future<Map<String, dynamic>> _generateToken() async {
+  Future<ControlRoomResponse> _createSipControlRoom() async {
     try {
-      var request = livekitServerSdk
-          .replace(path: '/server_sdk/generate_token', queryParameters: {
-        'username': _username.text,
-        'password': _password.text,
-        'domain': _domain.text,
-      });
-
-      final response = await http.get(request);
-
-      if (response.statusCode == 200) {
-        return json.decode(response.body);
-      } else {
-        throw Exception('Failed to generate token: ${response.body}');
-      }
+      return (await sipControlRoomApi.apiV1RoomsControlPost(
+              body: ControlRoomCreate(
+        username: _username.text,
+        domain: _domain.text,
+      )))
+          .bodyOrThrow;
     } catch (e) {
       throw Exception('Failed to generate token: $e');
     }

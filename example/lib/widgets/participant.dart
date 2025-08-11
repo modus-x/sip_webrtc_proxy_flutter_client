@@ -10,9 +10,7 @@ import 'participant_info.dart';
 abstract class ParticipantWidget extends StatefulWidget {
   // Convenience method to return relevant widget for participant
   static ParticipantWidget widgetFor(ParticipantTrack participantTrack,
-      {bool showStatsLayer = false,
-      Function(SipCallStatus status)? answer,
-      Function(SipCallStatus status)? hangup}) {
+      {bool showStatsLayer = false}) {
     if (participantTrack.participant is LocalParticipant) {
       return LocalParticipantWidget(
           participantTrack.participant as LocalParticipant,
@@ -22,9 +20,7 @@ abstract class ParticipantWidget extends StatefulWidget {
       return RemoteParticipantWidget(
           participantTrack.participant as RemoteParticipant,
           participantTrack.type,
-          showStatsLayer,
-          answer: answer,
-          hangup: hangup);
+          showStatsLayer);
     }
     throw UnimplementedError('Unknown participant type');
   }
@@ -68,15 +64,11 @@ class RemoteParticipantWidget extends ParticipantWidget {
   @override
   final bool showStatsLayer;
 
-  final Function(SipCallStatus status)? answer;
-  final Function(SipCallStatus status)? hangup;
 
   const RemoteParticipantWidget(
     this.participant,
     this.type,
     this.showStatsLayer, {
-    this.answer,
-    this.hangup,
     super.key,
   });
 
@@ -116,7 +108,7 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
     if (participant is RemoteParticipant) {
       _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
         // If the widget is gone, or we’re not talking, do nothing.
-        if (!mounted || participant.sipCallStatus != SipCallStatus.talking) {
+        if (!mounted) {
           return;
         }
 
@@ -151,27 +143,24 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
   @override
   Widget build(BuildContext ctx) {
     if (widget.participant is RemoteParticipant) {
-      SipCallStatus sip =
-          (widget.participant as RemoteParticipant).sipCallStatus;
+      String callStatus =
+          (widget.participant as RemoteParticipant).attributes['sip.callStatus'] ?? '';
       // ── 1) If we are in a special SIP state, show the big card ──────────────
-      if (sip == SipCallStatus.ringing ||
-          sip == SipCallStatus.incoming ||
-          sip == SipCallStatus.talking) {
+      if (callStatus == 'ringing' ||
+          callStatus == 'incoming' ||
+          callStatus == 'talking') {
         String? subtitle;
-        if (sip == SipCallStatus.ringing) subtitle = 'Идет вызов…';
-        if (sip == SipCallStatus.incoming) subtitle = 'Входящий вызов';
-        if (sip == SipCallStatus.talking) subtitle = _timerText(); // hh:mm:ss
+        if (callStatus == 'ringing') subtitle = 'Идет вызов…';
+        if (callStatus == 'incoming') subtitle = 'Входящий вызов';
+        if (callStatus == 'talking') subtitle = _timerText(); // hh:mm:ss
 
         return Center(
           child: _CallStatusCard(
-            status: sip,
+            callStatus: callStatus,
             title: widget.participant.identity,
             subtitle: subtitle,
-            onAnswer: sip == SipCallStatus.incoming
-                ? () => (widget as RemoteParticipantWidget).answer?.call(sip)
-                : null,
-            onHangup: () =>
-                (widget as RemoteParticipantWidget).hangup?.call(sip),
+            onAnswer: callStatus == 'incoming' ? () => {} : null,
+            onHangup: callStatus == 'incoming' ? () => {} : null,
           ),
         );
       }
@@ -377,14 +366,14 @@ class RemoteTrackQualityMenuWidget extends StatelessWidget {
 // A small, self-contained card that shows the three call states you provided.
 // ============================================================================
 class _CallStatusCard extends StatefulWidget {
-  final SipCallStatus status;
+  final String callStatus;
   final String title; // number or name
   final String? subtitle; // "Идет вызов…", timer, etc.
   final VoidCallback? onAnswer;
   final VoidCallback? onHangup;
 
   const _CallStatusCard({
-    required this.status,
+    required this.callStatus,
     required this.title,
     this.subtitle,
     this.onAnswer,
@@ -452,16 +441,16 @@ class _CallStatusCardState extends State<_CallStatusCard>
     // decide visuals based on state
     late final Color mainClr;
     late final IconData avatarIcon;
-    switch (widget.status) {
-      case SipCallStatus.ringing:
+    switch (widget.callStatus) {
+      case 'ringing':
         mainClr = const Color(0xFF2FA5F9);
         avatarIcon = Icons.call_made_rounded;
         break;
-      case SipCallStatus.talking:
+      case 'talking':
         mainClr = const Color(0xFF2FA5F9);
         avatarIcon = Icons.person;
         break;
-      case SipCallStatus.incoming:
+      case 'incoming':
         mainClr = const Color(0xFF4CAF50);
         avatarIcon = Icons.call_received_rounded;
         break;
@@ -472,7 +461,7 @@ class _CallStatusCardState extends State<_CallStatusCard>
 
     // bottom buttons
     List<Widget> buttons;
-    if (widget.status == SipCallStatus.incoming) {
+    if (widget.callStatus == 'incoming') {
       buttons = [
         _circButton(
             colour: const Color(0xFF4CAF50),
@@ -513,7 +502,7 @@ class _CallStatusCardState extends State<_CallStatusCard>
             mainAxisAlignment: MainAxisAlignment.center,
             children: buttons,
           ),
-          if (widget.status != SipCallStatus.incoming) ...[
+          if (widget.callStatus != 'incoming') ...[
             const SizedBox(height: 8),
             Text('Завершить', style: Theme.of(context).textTheme.bodySmall),
           ],

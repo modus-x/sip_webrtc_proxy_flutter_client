@@ -1,0 +1,12 @@
+targets:
+  $default:
+    sources:
+    - control_room_api/api.json
+    - lib/**
+    - $package$
+    builders:
+      swagger_dart_code_generator:
+        options:
+          input_folder: "control_room_api/"
+          output_folder: "lib/control_room_api/"
+          with_base_url: true

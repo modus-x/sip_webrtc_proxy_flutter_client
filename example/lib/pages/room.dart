@@ -1,19 +1,16 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:livekit_client/livekit_client.dart';
-import 'package:livekit_example/config.dart';
 import 'package:livekit_example/method_channels/replay_kit_channel.dart';
 
 import '../exts.dart';
+import '../models/sip_control.pb.dart';
 import '../utils.dart';
 import '../widgets/controls.dart';
 import '../widgets/participant.dart';
 import '../widgets/participant_info.dart';
-
-import 'package:http/http.dart' as http;
 
 class RoomPage extends StatefulWidget {
   final Room room;
@@ -87,6 +84,10 @@ class _RoomPageState extends State<RoomPage> {
 
   /// for more information, see [event types](https://docs.livekit.io/client/events/#events)
   void _setUpListeners() => _listener
+    ..on<ParticipantAttributesChanged>((event) {
+      print(
+          'Participant attributes changed: ${event.participant.identity}, attributes => ${event.attributes}');
+    })
     ..on<RoomDisconnectedEvent>((event) async {
       if (event.reason != null) {
         print('Room disconnected: reason => ${event.reason}');
@@ -98,18 +99,7 @@ class _RoomPageState extends State<RoomPage> {
       // sort participants on many track events as noted in documentation linked above
       _sortParticipants();
     })
-    ..on<ParticipantInfoUpdatedEvent>((event) {
-      var attributes2 = event.info.attributes;
-      if (attributes2.containsKey('registerCode') &&
-          attributes2['registerCode'] != '200') {
-        print('ParticipantInfoUpdatedEvent attributes: ${attributes2}');
-        context.showErrorDialog(
-            'Ошибка при SIP регистрации! Попробуйте ввести другие данные',
-            onPressed: () {
-          widget.room.disconnect();
-        });
-      } else {}
-    })
+    ..on<ParticipantInfoUpdatedEvent>((event) {})
     ..on<RoomRecordingStatusChanged>((event) {
       context.showRecordingStatusChangedDialog(event.activeRecording);
     })
@@ -118,9 +108,7 @@ class _RoomPageState extends State<RoomPage> {
           'Attempting to reconnect ${event.attempt}/${event.maxAttemptsRetry}, '
           '(${event.nextRetryDelaysInMs}ms delay until next attempt)');
     })
-    ..on<LocalTrackSubscribedEvent>((event) {
-
-    })
+    ..on<LocalTrackSubscribedEvent>((event) {})
     ..on<LocalTrackPublishedEvent>((_) {
       _sortParticipants();
     })
@@ -130,7 +118,6 @@ class _RoomPageState extends State<RoomPage> {
     ..on<TrackSubscribedEvent>((_) {
       _sortParticipants();
       Hardware.instance.enumerateDevices().then((devices) async {
-
         await widget.room.localParticipant?.setMicrophoneEnabled(false);
         await widget.room.localParticipant?.setMicrophoneEnabled(true);
 
@@ -172,13 +159,7 @@ class _RoomPageState extends State<RoomPage> {
       print('Room metadata changed: ${event.metadata}');
     })
     ..on<DataReceivedEvent>((event) {
-      String decoded = 'Failed to decode';
-      try {
-        decoded = utf8.decode(event.data);
-      } catch (err) {
-        print('Failed to decode: $err');
-      }
-      context.showDataReceivedDialog(decoded);
+      if (event.topic == 'sip-control') {}
     })
     ..on<AudioPlaybackStatusChanged>((event) async {
       if (!widget.room.canPlaybackAudio) {
@@ -293,30 +274,27 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
-  Future<Map<String, dynamic>> _call() async {
-    try {
-      var name = widget.room.localParticipant?.attributes['sip_username'];
-      if (name != null) {
-        var request = livekitServerSdk.replace(
-            path: '/server_sdk/make_call',
-            queryParameters: {'number': _number.text, 'username': name});
-        final response = await http.get(request);
-
-        if (response.statusCode == 200) {
-          return json.decode(response.body);
-        } else {
-          throw Exception('Failed to generate token: ${response.body}');
-        }
-      }
-      throw Exception('no sip username...');
-    } catch (e) {
-      throw Exception('Failed to generate token: $e');
-    }
-  }
-
   void _onTapDisconnect() async {
     final result = await context.showDisconnectDialog();
     if (result == true) await widget.room.disconnect();
+  }
+
+  void _onTapCall() async {
+    final sipMakeCallRequest = SipMakeCall(
+      uri: 'sip:${_number.text}@${_getDomainName()}',
+    );
+    final command = SipControlCommand(makeCall: sipMakeCallRequest);
+    final buffer = command.writeToBuffer();
+    final participant = widget.room.localParticipant;
+    await participant?.publishData(
+      buffer,
+      reliable: true,
+      topic: 'sip-control',
+    );
+  }
+
+  String _getDomainName() {
+    return widget.room.name?.split('@').last ?? '';
   }
 
   @override
@@ -363,38 +341,16 @@ class _RoomPageState extends State<RoomPage> {
                             child: ParticipantWidget.widgetFor(
                               remotePatricipantTracks.first,
                               showStatsLayer: false,
-                              answer: (sip) {
-                                Map<String, String> cur = {
-                                  'sip_action': 'answer'
-                                };
-                                widget.room.localParticipant
-                                    ?.setAttributes(cur);
-                                widget.room.localParticipant
-                                    ?.setAttributes({'sip_action': ''});
-                              },
-                              hangup: (sip) {
-                                Map<String, String> cur = {
-                                  'sip_action': sip == SipCallStatus.incoming
-                                      ? 'decline'
-                                      : 'hangup'
-                                };
-                                widget.room.localParticipant
-                                    ?.setAttributes(cur);
-                                widget.room.localParticipant
-                                    ?.setAttributes({'sip_action': ''});
-                              },
                             ),
                           )
                         : const SizedBox(), // empty area until a call starts
                   ),
 
                   // ── NUMBER INPUT ───────────────────────────────────────
-                  if (remotePatricipantTracks.isEmpty) ...[
-                    const SizedBox(height: 32),
-                    _buildNumberInput(),
-                    const SizedBox(height: 40),
-                    Center(child: _buildCallButton()),
-                  ],
+                  const SizedBox(height: 32),
+                  _buildNumberInput(),
+                  const SizedBox(height: 40),
+                  Center(child: _buildCallButton()),
 
                   // ── LOCAL CONTROLS (always present) ───────────────────
                   if (widget.room.localParticipant != null) ...[
@@ -410,18 +366,6 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  // Re-usable white 56-px input frame (same style as the login page).
-  Widget _fieldFrame({required Widget child}) => Container(
-        height: 56,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFFDFDFDF)),
-        ),
-        child: child,
-      );
-
 // Big circular call button + caption.
 // Uses the same onPressed logic you already had.
   Widget _buildCallButton() => ValueListenableBuilder(
@@ -433,12 +377,7 @@ class _RoomPageState extends State<RoomPage> {
               width: 72,
               height: 72,
               child: ElevatedButton(
-                onPressed: _number.text.isEmpty
-                    ? null
-                    : () async {
-                        final result = await _call();
-                        print('call result: $result');
-                      },
+                onPressed: _number.text.isEmpty ? null : _onTapCall,
                 style: ElevatedButton.styleFrom(
                   shape: const CircleBorder(),
                   backgroundColor: const Color(0xFF2FA5F9),

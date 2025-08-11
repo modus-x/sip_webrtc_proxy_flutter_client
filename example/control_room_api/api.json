@@ -1,0 +1,460 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LiveKit Control Room API",
+    "description": "API for managing LiveKit control rooms for SIP bridge integration",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/version": {
+      "get": {
+        "summary": "Get Version",
+        "description": "Get API version information.",
+        "operationId": "get_version_version_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Health check endpoint with version information.",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          }
+        }
+      }
+    },
+    "/rooms/control": {
+      "post": {
+        "summary": "Create Control Room",
+        "description": "Create a new LiveKit control room.\n\n- Room name = `<username>@<domain>`\n- `metadata` will include `control_room=true` + SIP info to distinguish it.",
+        "operationId": "create_control_room_rooms_control_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ControlRoomCreate" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ControlRoomResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rooms/control/token": {
+      "post": {
+        "summary": "Generate Token",
+        "description": "Generate an access token for an existing control room.",
+        "operationId": "generate_token_rooms_control_token_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TokenRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TokenResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rooms/control/{room_name}": {
+      "delete": {
+        "summary": "Delete Control Room",
+        "description": "Delete an existing control room identified by its LiveKit room name.",
+        "operationId": "delete_control_room_rooms_control__room_name__delete",
+        "parameters": [
+          {
+            "name": "room_name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Room Name" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Successful Response" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update Control Room",
+        "description": "Modify metadata of an existing control room.",
+        "operationId": "update_control_room_rooms_control__room_name__patch",
+        "parameters": [
+          {
+            "name": "room_name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Room Name" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ControlRoomUpdate" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ControlRoomResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rooms/control": {
+      "post": {
+        "summary": "Create Control Room V1",
+        "description": "Create a new LiveKit control room (API v1).",
+        "operationId": "create_control_room_v1_api_v1_rooms_control_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ControlRoomCreate" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ControlRoomResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rooms/control/token": {
+      "post": {
+        "summary": "Generate Token V1",
+        "description": "Generate an access token for an existing control room (API v1).",
+        "operationId": "generate_token_v1_api_v1_rooms_control_token_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TokenRequest" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TokenResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rooms/control/{room_name}": {
+      "delete": {
+        "summary": "Delete Control Room V1",
+        "description": "Delete an existing control room (API v1).",
+        "operationId": "delete_control_room_v1_api_v1_rooms_control__room_name__delete",
+        "parameters": [
+          {
+            "name": "room_name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Room Name" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Successful Response" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update Control Room V1",
+        "description": "Modify metadata of an existing control room (API v1).",
+        "operationId": "update_control_room_v1_api_v1_rooms_control__room_name__patch",
+        "parameters": [
+          {
+            "name": "room_name",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Room Name" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ControlRoomUpdate" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ControlRoomResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ControlRoomCreate": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Username",
+            "description": "SIP username of the caller"
+          },
+          "domain": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Domain",
+            "description": "SIP domain"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": { "type": "string" },
+                "type": "object"
+              },
+              { "type": "null" }
+            ],
+            "title": "Metadata",
+            "description": "Extra metadata to include in the LiveKit room. Will be merged with control-room flag."
+          }
+        },
+        "type": "object",
+        "required": ["username", "domain"],
+        "title": "ControlRoomCreate",
+        "description": "Payload for creating a control room.\n\n`username` + `domain` will form the unique room name (`<username>@<domain>`)."
+      },
+      "ControlRoomResponse": {
+        "properties": {
+          "room_id": { "type": "string", "title": "Room Id" },
+          "name": { "type": "string", "title": "Name" },
+          "metadata": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Metadata"
+          },
+          "access_token": {
+            "type": "string",
+            "title": "Access Token",
+            "description": "JWT token to connect to this room"
+          },
+          "livekit_url": {
+            "type": "string",
+            "title": "Livekit Url",
+            "description": "LiveKit server URL for WebSocket connection"
+          }
+        },
+        "type": "object",
+        "required": ["room_id", "name", "access_token", "livekit_url"],
+        "title": "ControlRoomResponse"
+      },
+      "ControlRoomUpdate": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": { "type": "string" },
+                "type": "object"
+              },
+              { "type": "null" }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "type": "object",
+        "title": "ControlRoomUpdate",
+        "description": "Allowed mutable fields for a LiveKit room. Currently only supports metadata updates."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": { "$ref": "#/components/schemas/ValidationError" },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "TokenRequest": {
+        "properties": {
+          "room_name": {
+            "type": "string",
+            "title": "Room Name",
+            "description": "Name of the room to generate token for"
+          },
+          "participant_identity": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Participant Identity",
+            "description": "Identity for the participant (defaults to username from room)"
+          },
+          "participant_name": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Participant Name",
+            "description": "Display name for the participant"
+          },
+          "token_ttl": {
+            "anyOf": [{ "type": "integer" }, { "type": "null" }],
+            "title": "Token Ttl",
+            "description": "Token TTL in seconds (default: 1 hour)",
+            "default": 3600
+          }
+        },
+        "type": "object",
+        "required": ["room_name"],
+        "title": "TokenRequest",
+        "description": "Request payload for generating access tokens for existing rooms."
+      },
+      "TokenResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "title": "Access Token",
+            "description": "JWT token to connect to the room"
+          },
+          "livekit_url": {
+            "type": "string",
+            "title": "Livekit Url",
+            "description": "LiveKit server URL for WebSocket connection"
+          },
+          "room_name": {
+            "type": "string",
+            "title": "Room Name",
+            "description": "Name of the room"
+          },
+          "participant_identity": {
+            "type": "string",
+            "title": "Participant Identity",
+            "description": "Participant identity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "access_token",
+          "livekit_url",
+          "room_name",
+          "participant_identity"
+        ],
+        "title": "TokenResponse",
+        "description": "Response containing access token and connection details."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": { "anyOf": [{ "type": "string" }, { "type": "integer" }] },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": { "type": "string", "title": "Message" },
+          "type": { "type": "string", "title": "Error Type" }
+        },
+        "type": "object",
+        "required": ["loc", "msg", "type"],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
