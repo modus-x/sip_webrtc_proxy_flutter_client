@@ -1,16 +1,16 @@
 import 'dart:async';
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:livekit_client/livekit_client.dart';
-import 'package:livekit_example/method_channels/replay_kit_channel.dart';
 
 import '../exts.dart';
-import '../models/sip_control.pb.dart';
+import '../models/sip_signalling.pb.dart';
 import '../utils.dart';
 import '../widgets/controls.dart';
 import '../widgets/participant.dart';
 import '../widgets/participant_info.dart';
+import '../widgets/subscription_widget.dart';
+import '../widgets/publish_presence_widget.dart';
 
 class RoomPage extends StatefulWidget {
   final Room room;
@@ -31,10 +31,12 @@ class _RoomPageState extends State<RoomPage> {
   ParticipantTrack? localPatricipantTrack;
 
   EventsListener<RoomEvent> get _listener => widget.listener;
-  bool get fastConnection => widget.room.engine.fastConnectOptions != null;
   bool _flagStartedReplayKit = false;
 
   final _number = TextEditingController();
+
+  final _sipControlReponseController =
+      StreamController<SipControlResponse>.broadcast();
 
   @override
   void initState() {
@@ -44,18 +46,9 @@ class _RoomPageState extends State<RoomPage> {
     // add callbacks for finer grained events
     _setUpListeners();
     _sortParticipants();
-    WidgetsBindingCompatible.instance?.addPostFrameCallback((_) {
-      if (!fastConnection) {
-        _askPublish();
-      }
-    });
 
     if (lkPlatformIs(PlatformType.android)) {
       Hardware.instance.setSpeakerphoneOn(true);
-    }
-
-    if (lkPlatformIs(PlatformType.iOS)) {
-      ReplayKitChannel.listenMethodChannel(widget.room);
     }
 
     if (lkPlatformIsDesktop()) {
@@ -71,9 +64,6 @@ class _RoomPageState extends State<RoomPage> {
   void dispose() {
     // always dispose listener
     (() async {
-      if (lkPlatformIs(PlatformType.iOS)) {
-        ReplayKitChannel.closeReplayKit();
-      }
       widget.room.removeListener(_onRoomDidUpdate);
       await _listener.dispose();
       await widget.room.dispose();
@@ -99,7 +89,6 @@ class _RoomPageState extends State<RoomPage> {
       // sort participants on many track events as noted in documentation linked above
       _sortParticipants();
     })
-    ..on<ParticipantInfoUpdatedEvent>((event) {})
     ..on<RoomRecordingStatusChanged>((event) {
       context.showRecordingStatusChangedDialog(event.activeRecording);
     })
@@ -117,32 +106,6 @@ class _RoomPageState extends State<RoomPage> {
     })
     ..on<TrackSubscribedEvent>((_) {
       _sortParticipants();
-      Hardware.instance.enumerateDevices().then((devices) async {
-        await widget.room.localParticipant?.setMicrophoneEnabled(false);
-        await widget.room.localParticipant?.setMicrophoneEnabled(true);
-
-        List<MediaDevice>? audioInputs;
-        List<MediaDevice>? audioOutputs;
-
-        audioInputs = devices.where((d) => d.kind == 'audioinput').toList();
-        audioOutputs = devices.where((d) => d.kind == 'audiooutput').toList();
-
-        var audioInput = audioInputs.firstWhereOrNull((device) {
-          return device.deviceId == widget.room.selectedAudioInputDeviceId;
-        });
-
-        if (audioInput != null) {
-          widget.room.setAudioInputDevice(audioInput);
-        }
-
-        var audioOutput = audioOutputs.firstWhereOrNull((device) {
-          return device.deviceId == widget.room.selectedAudioOutputDeviceId;
-        });
-
-        if (audioOutput != null) {
-          widget.room.setAudioOutputDevice(audioOutput);
-        }
-      });
     })
     ..on<TrackUnsubscribedEvent>((_) => _sortParticipants())
     ..on<TrackE2EEStateEvent>(_onE2EEStateEvent)
@@ -159,7 +122,10 @@ class _RoomPageState extends State<RoomPage> {
       print('Room metadata changed: ${event.metadata}');
     })
     ..on<DataReceivedEvent>((event) {
-      if (event.topic == 'sip-control') {}
+      if (event.topic == 'sip-control') {
+        final response = SipControlResponse.fromBuffer(event.data);
+        _sipControlReponseController.add(response);
+      }
     })
     ..on<AudioPlaybackStatusChanged>((event) async {
       if (!widget.room.canPlaybackAudio) {
@@ -171,18 +137,9 @@ class _RoomPageState extends State<RoomPage> {
       }
     });
 
-  void _askPublish() async {
-    final result = await context.showPublishDialog();
-    if (result != true) return;
-    // video will fail when running in ios simulator
+  void _publishTracks(bool active) async {
     try {
-      await widget.room.localParticipant?.setCameraEnabled(true);
-    } catch (error) {
-      print('could not publish video: $error');
-      await context.showErrorDialog(error);
-    }
-    try {
-      await widget.room.localParticipant?.setMicrophoneEnabled(true);
+      await widget.room.localParticipant?.setMicrophoneEnabled(active);
     } catch (error) {
       print('could not publish audio: $error');
       await context.showErrorDialog(error);
@@ -235,6 +192,13 @@ class _RoomPageState extends State<RoomPage> {
           b.participant.joinedAt.millisecondsSinceEpoch;
     });
 
+    // try to publish tracks if there are remote participants
+    if (remoteMediaTracks.isNotEmpty) {
+      _publishTracks(true);
+    } else {
+      _publishTracks(false);
+    }
+
     setState(() {
       remotePatricipantTracks = remoteMediaTracks;
     });
@@ -244,13 +208,6 @@ class _RoomPageState extends State<RoomPage> {
     if (localParticipantTracks != null) {
       for (var t in localParticipantTracks) {
         if (t.isScreenShare) {
-          if (lkPlatformIs(PlatformType.iOS)) {
-            if (!_flagStartedReplayKit) {
-              _flagStartedReplayKit = true;
-
-              ReplayKitChannel.startReplayKit();
-            }
-          }
           screenTracks.add(ParticipantTrack(
             participant: widget.room.localParticipant!,
             type: ParticipantTrackType.kScreenShare,
@@ -259,8 +216,6 @@ class _RoomPageState extends State<RoomPage> {
           if (lkPlatformIs(PlatformType.iOS)) {
             if (_flagStartedReplayKit) {
               _flagStartedReplayKit = false;
-
-              ReplayKitChannel.closeReplayKit();
             }
           }
 
@@ -276,14 +231,36 @@ class _RoomPageState extends State<RoomPage> {
 
   void _onTapDisconnect() async {
     final result = await context.showDisconnectDialog();
-    if (result == true) await widget.room.disconnect();
+    if (result == true) {
+      final sipUnregisterRequest = SipUnregister();
+      final command = SipControlCommand(
+          unregister: sipUnregisterRequest, commandId: 'unregister');
+      final buffer = command.writeToBuffer();
+      final participant = widget.room.localParticipant;
+
+      var unregisterFuture = _sipControlReponseController.stream
+          .firstWhere((event) => event.commandId == 'unregister');
+
+      await participant?.publishData(
+        buffer,
+        reliable: true,
+        topic: 'sip-control',
+      );
+
+      await unregisterFuture;
+
+      await widget.room.disconnect();
+    }
   }
 
   void _onTapCall() async {
     final sipMakeCallRequest = SipMakeCall(
-      uri: 'sip:${_number.text}@${_getDomainName()}',
+      target: _number.text,
     );
-    final command = SipControlCommand(makeCall: sipMakeCallRequest);
+    final command = SipControlCommand(
+      makeCall: sipMakeCallRequest,
+      commandId: 'make-call',
+    );
     final buffer = command.writeToBuffer();
     final participant = widget.room.localParticipant;
     await participant?.publishData(
@@ -293,71 +270,77 @@ class _RoomPageState extends State<RoomPage> {
     );
   }
 
-  String _getDomainName() {
-    return widget.room.name?.split('@').last ?? '';
-  }
-
   @override
   Widget build(BuildContext context) {
     final localName = widget.room.localParticipant?.name ?? '';
 
     return Scaffold(
       body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480, maxHeight: 640),
-          child: Card(
-            color: Colors.white,
-            elevation: 0,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // ── HEADER ──────────────────────────────────────────────
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        localName,
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.logout),
-                        splashRadius: 20,
-                        onPressed: _onTapDisconnect, // existing logic
-                      ),
+        child: Container(
+          width: 500,
+          child: IntrinsicHeight(
+            child: Card(
+              color: Colors.white,
+              elevation: 0,
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ── HEADER ──────────────────────────────────────────────
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          localName,
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.logout),
+                          splashRadius: 20,
+                          onPressed: _onTapDisconnect, // existing logic
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 32),
+          
+                    // ── REMOTE VIDEO or PLACEHOLDER ───────────────────────
+                    Expanded(
+                      child: remotePatricipantTracks.isNotEmpty
+                          ? FittedBox(
+                              child: ParticipantWidget.widgetFor(
+                                remotePatricipantTracks.first,
+                                showStatsLayer: false,
+                              ),
+                            )
+                          : const SizedBox(), // empty area until a call starts
+                    ),
+          
+                    // ── NUMBER INPUT ───────────────────────────────────────
+                    const SizedBox(height: 32),
+                    _buildNumberInput(),
+                    const SizedBox(height: 40),
+                    Center(child: _buildCallButton()),
+          
+                    // ── LOCAL CONTROLS (always present) ───────────────────
+                    if (widget.room.localParticipant != null) ...[
+                      const SizedBox(height: 24),
+                      ControlsWidget(widget.room, widget.room.localParticipant!),
                     ],
-                  ),
-                  const SizedBox(height: 32),
-
-                  // ── REMOTE VIDEO or PLACEHOLDER ───────────────────────
-                  Expanded(
-                    child: remotePatricipantTracks.isNotEmpty
-                        ? FittedBox(
-                            child: ParticipantWidget.widgetFor(
-                              remotePatricipantTracks.first,
-                              showStatsLayer: false,
-                            ),
-                          )
-                        : const SizedBox(), // empty area until a call starts
-                  ),
-
-                  // ── NUMBER INPUT ───────────────────────────────────────
-                  const SizedBox(height: 32),
-                  _buildNumberInput(),
-                  const SizedBox(height: 40),
-                  Center(child: _buildCallButton()),
-
-                  // ── LOCAL CONTROLS (always present) ───────────────────
-                  if (widget.room.localParticipant != null) ...[
                     const SizedBox(height: 24),
-                    ControlsWidget(widget.room, widget.room.localParticipant!),
+          
+                    // SUBSCRIPTION TEST
+                    SubscriptionWidget(room: widget.room, listener: _listener),
+
+                    // PRESENCE TEST
+                    const SizedBox(height: 16),
+                    PublishPresenceWidget(room: widget.room),
                   ],
-                ],
+                ),
               ),
             ),
           ),

@@ -22,10 +22,12 @@ import 'publication/local.dart';
 import 'publication/remote.dart';
 import 'publication/track_publication.dart';
 import 'stats/stats.dart';
+import 'track/processor.dart';
 import 'track/track.dart';
 import 'types/other.dart';
 import 'types/participant_permissions.dart';
-import 'proto/livekit_models.pb.dart' as lk_models;
+import 'types/participant_state.dart' show ParticipantState;
+import 'types/transcription_segment.dart';
 
 /// Base type for all LiveKit events.
 mixin LiveKitEvent {}
@@ -371,12 +373,12 @@ class ParticipantMetadataUpdatedEvent with RoomEvent, ParticipantEvent {
   String toString() => '${runtimeType}(participant: ${participant})';
 }
 
-class ParticipantInfoUpdatedEvent with RoomEvent, ParticipantEvent {
+class ParticipantStateUpdatedEvent with RoomEvent, ParticipantEvent {
   final Participant participant;
-  final lk_models.ParticipantInfo info;
-  const ParticipantInfoUpdatedEvent({
+  final ParticipantState state;
+  const ParticipantStateUpdatedEvent({
     required this.participant,
-    required this.info,
+    required this.state,
   });
 
   @override
@@ -385,8 +387,7 @@ class ParticipantInfoUpdatedEvent with RoomEvent, ParticipantEvent {
 
 /// [Pariticpant]'s [ConnectionQuality] has updated.
 /// Emitted by [Room] and [Participant].
-class ParticipantConnectionQualityUpdatedEvent
-    with RoomEvent, ParticipantEvent {
+class ParticipantConnectionQualityUpdatedEvent with RoomEvent, ParticipantEvent {
   final Participant participant;
   final ConnectionQuality connectionQuality;
   const ParticipantConnectionQualityUpdatedEvent({
@@ -470,23 +471,6 @@ class ParticipantPermissionsUpdatedEvent with RoomEvent, ParticipantEvent {
   @override
   String toString() => '${runtimeType}'
       '(participant: ${participant}, permissions: ${permissions})';
-}
-
-class TranscriptionSegment {
-  final String id;
-  final String text;
-  final DateTime firstReceivedTime;
-  final DateTime lastReceivedTime;
-  final bool isFinal;
-  final String language;
-  const TranscriptionSegment({
-    required this.id,
-    required this.text,
-    required this.firstReceivedTime,
-    required this.lastReceivedTime,
-    required this.isFinal,
-    required this.language,
-  });
 }
 
 /// Transcription event received from the server.
@@ -577,4 +561,30 @@ class VideoReceiverStatsEvent with TrackEvent {
   @override
   String toString() => '${runtimeType}'
       'stats: ${stats})';
+}
+
+class AudioVisualizerEvent with TrackEvent {
+  final Track track;
+  final List<Object?> event;
+  const AudioVisualizerEvent({
+    required this.track,
+    required this.event,
+  });
+
+  @override
+  String toString() => '${runtimeType}'
+      'track: ${track})';
+}
+
+class TrackProcessorUpdateEvent with TrackEvent {
+  final Track track;
+  final TrackProcessor? processor;
+  const TrackProcessorUpdateEvent({
+    required this.track,
+    this.processor,
+  });
+
+  @override
+  String toString() => '${runtimeType}'
+      'track: ${track})';
 }

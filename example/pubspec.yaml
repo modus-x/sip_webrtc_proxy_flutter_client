@@ -21,7 +21,6 @@ dependencies:
   flutter_svg: ^2.0.5
   http: ^1.1.0
   dropdown_button2: ^2.3.6
-  flutter_window_close: ^1.0.0
   collection: '>=1.16.0'
   chopper: ^8.0.0
   json_annotation: ^4.8.0

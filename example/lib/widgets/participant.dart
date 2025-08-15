@@ -4,6 +4,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:livekit_client/livekit_client.dart';
+import 'package:livekit_example/models/sip_signalling.pb.dart';
 
 import 'participant_info.dart';
 
@@ -64,7 +65,6 @@ class RemoteParticipantWidget extends ParticipantWidget {
   @override
   final bool showStatsLayer;
 
-
   const RemoteParticipantWidget(
     this.participant,
     this.type,
@@ -121,7 +121,7 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
   void dispose() {
     widget.participant.removeListener(_onParticipantChanged);
     _listener?.dispose();
-    _ticker?.cancel(); 
+    _ticker?.cancel();
     super.dispose();
   }
 
@@ -144,38 +144,59 @@ abstract class _ParticipantWidgetState<T extends ParticipantWidget>
   Widget build(BuildContext ctx) {
     if (widget.participant is RemoteParticipant) {
       String callStatus =
-          (widget.participant as RemoteParticipant).attributes['sip.callStatus'] ?? '';
-      // ── 1) If we are in a special SIP state, show the big card ──────────────
-      if (callStatus == 'ringing' ||
-          callStatus == 'incoming' ||
-          callStatus == 'talking') {
-        String? subtitle;
-        if (callStatus == 'ringing') subtitle = 'Идет вызов…';
-        if (callStatus == 'incoming') subtitle = 'Входящий вызов';
-        if (callStatus == 'talking') subtitle = _timerText(); // hh:mm:ss
-
-        return Center(
-          child: _CallStatusCard(
-            callStatus: callStatus,
-            title: widget.participant.identity,
-            subtitle: subtitle,
-            onAnswer: callStatus == 'incoming' ? () => {} : null,
-            onHangup: callStatus == 'incoming' ? () => {} : null,
-          ),
-        );
-      }
+          widget.participant.attributes['sip.callStatus'] ?? 'dialing';
+      bool isIncoming =
+          widget.participant.attributes['sip.callType'] == 'inbound';
+      return Center(
+        child: _CallStatusCard(
+          joinedAt: widget.participant.joinedAt,
+          callStatus: callStatus,
+          title: widget.participant.identity,
+          isIncoming: isIncoming,
+          onSwitchHold: () async {
+            var callId = widget.participant.attributes['sip.callID'];
+            final sipSwitchHoldRequest = SipSwitchHold(callId: callId);
+            final command = SipControlCommand(
+                switchHold: sipSwitchHoldRequest, commandId: 'switchHold');
+            final buffer = command.writeToBuffer();
+            final participant = widget.participant.room.localParticipant;
+            await participant?.publishData(
+              buffer,
+              reliable: true,
+              topic: 'sip-control',
+            );
+          },
+          onAnswer: () async {
+            var callId = widget.participant.attributes['sip.callID'];
+            final sipAnswerCallRequest = SipAnswerCall(callId: callId);
+            final command = SipControlCommand(
+                answerCall: sipAnswerCallRequest, commandId: 'answerCall');
+            final buffer = command.writeToBuffer();
+            final participant = widget.participant.room.localParticipant;
+            await participant?.publishData(
+              buffer,
+              reliable: true,
+              topic: 'sip-control',
+            );
+          },
+          onHangup: () async {
+            var callId = widget.participant.attributes['sip.callID'];
+            final sipHangupCallRequest = SipHangupCall(callId: callId);
+            final command = SipControlCommand(
+                hangupCall: sipHangupCallRequest, commandId: 'hangupCall');
+            final buffer = command.writeToBuffer();
+            final participant = widget.participant.room.localParticipant;
+            await participant?.publishData(
+              buffer,
+              reliable: true,
+              topic: 'sip-control',
+            );
+          },
+        ),
+      );
     }
 
     return Container();
-  }
-
-// very small helper to format the call duration (keeps old logic intact)
-  String _timerText() {
-    final secs =
-        widget.participant.joinedAt.difference(DateTime.now()).inSeconds.abs();
-    final m = (secs ~/ 60).toString().padLeft(2, '0');
-    final s = (secs % 60).toString().padLeft(2, '0');
-    return '$m:$s';
   }
 }
 
@@ -267,7 +288,7 @@ class RemoteTrackPublicationMenuWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-        color: Colors.black.withOpacity(0.3),
+        color: Colors.black.withValues(alpha: 0.3),
         child: PopupMenuButton<Function>(
           tooltip: 'Subscribe menu',
           icon: Icon(icon,
@@ -305,7 +326,7 @@ class RemoteTrackFPSMenuWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-        color: Colors.black.withOpacity(0.3),
+        color: Colors.black.withValues(alpha: 0.3),
         child: PopupMenuButton<Function>(
           tooltip: 'Preferred FPS',
           icon: Icon(icon, color: Colors.white),
@@ -339,7 +360,7 @@ class RemoteTrackQualityMenuWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-        color: Colors.black.withOpacity(0.3),
+        color: Colors.black.withValues(alpha: 0.3),
         child: PopupMenuButton<Function>(
           tooltip: 'Preferred Quality',
           icon: Icon(icon, color: Colors.white),
@@ -367,17 +388,22 @@ class RemoteTrackQualityMenuWidget extends StatelessWidget {
 // ============================================================================
 class _CallStatusCard extends StatefulWidget {
   final String callStatus;
+  final bool isIncoming;
   final String title; // number or name
-  final String? subtitle; // "Идет вызов…", timer, etc.
   final VoidCallback? onAnswer;
   final VoidCallback? onHangup;
+  final VoidCallback? onSwitchHold;
+
+  final DateTime joinedAt;
 
   const _CallStatusCard({
     required this.callStatus,
     required this.title,
-    this.subtitle,
+    required this.isIncoming,
+    required this.onSwitchHold,
     this.onAnswer,
     this.onHangup,
+    required this.joinedAt,
   });
 
   @override
@@ -391,9 +417,39 @@ class _CallStatusCardState extends State<_CallStatusCard>
     duration: const Duration(seconds: 2),
   )..repeat();
 
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CallStatusCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.callStatus != oldWidget.callStatus) {
+      _updateTimer();
+    }
+  }
+
+  void _updateTimer() {
+    _timer?.cancel();
+    if (widget.callStatus == 'talking') {
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        setState(() {});
+      });
+    }
+  }
+
   @override
   void dispose() {
     _ctrl.dispose();
+    _timer?.cancel();
     super.dispose();
   }
 
@@ -455,13 +511,14 @@ class _CallStatusCardState extends State<_CallStatusCard>
         avatarIcon = Icons.call_received_rounded;
         break;
       default:
+        // hangup, dialing here
         mainClr = Colors.grey;
         avatarIcon = Icons.call;
     }
 
     // bottom buttons
     List<Widget> buttons;
-    if (widget.callStatus == 'incoming') {
+    if (widget.isIncoming && widget.callStatus == 'ringing') {
       buttons = [
         _circButton(
             colour: const Color(0xFF4CAF50),
@@ -479,6 +536,11 @@ class _CallStatusCardState extends State<_CallStatusCard>
             colour: const Color(0xFFF44336),
             iconPath: 'images/call_hangup.svg',
             onTap: widget.onHangup),
+        const SizedBox(width: 40),
+        _circButton(
+            colour: Colors.yellow,
+            iconPath: 'images/call_hold.svg',
+            onTap: widget.onSwitchHold),
       ];
     }
 
@@ -492,23 +554,30 @@ class _CallStatusCardState extends State<_CallStatusCard>
           Text(widget.title,
               style:
                   const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-          if (widget.subtitle != null) ...[
-            const SizedBox(height: 4),
-            Text(widget.subtitle!,
-                style: const TextStyle(fontSize: 14, color: Color(0xFF8F9CA9))),
-          ],
+          const SizedBox(height: 4),
+          Text(widget.callStatus,
+              style: const TextStyle(fontSize: 14, color: Color(0xFF8F9CA9))),
           const SizedBox(height: 48),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: buttons,
           ),
-          if (widget.callStatus != 'incoming') ...[
+          if (widget.callStatus == 'talking') ...[
             const SizedBox(height: 8),
-            Text('Завершить', style: Theme.of(context).textTheme.bodySmall),
+            Text(_timerText(),
+                style: const TextStyle(fontSize: 14, color: Color(0xFF8F9CA9))),
           ],
         ],
       ),
     );
+  }
+
+// very small helper to format the call duration (keeps old logic intact)
+  String _timerText() {
+    final secs = widget.joinedAt.difference(DateTime.now()).inSeconds.abs();
+    final m = (secs ~/ 60).toString().padLeft(2, '0');
+    final s = (secs % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
   // helper to make a coloured circular button

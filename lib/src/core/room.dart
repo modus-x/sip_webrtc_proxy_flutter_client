@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// ignore_for_file: deprecated_member_use_from_same_package
-
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -23,6 +21,7 @@ import 'package:http/http.dart' as http;
 import 'package:meta/meta.dart';
 
 import '../core/signal_client.dart';
+import '../data_stream/stream_reader.dart';
 import '../e2ee/e2ee_manager.dart';
 import '../events.dart';
 import '../exceptions.dart';
@@ -41,15 +40,19 @@ import '../support/disposable.dart';
 import '../support/platform.dart';
 import '../support/region_url_provider.dart';
 import '../support/websocket.dart' show WebSocketException;
+import '../track/audio_management.dart';
 import '../track/local/audio.dart';
 import '../track/local/video.dart';
 import '../track/track.dart';
+import '../types/data_stream.dart';
 import '../types/other.dart';
+import '../types/rpc.dart';
+import '../types/transcription_segment.dart';
 import '../utils.dart';
 import 'engine.dart';
 
 import '../track/web/_audio_api.dart'
-    if (dart.library.html) '../track/web/_audio_html.dart' as audio;
+    if (dart.library.js_interop) '../track/web/_audio_html.dart' as audio;
 
 /// Room is the primary construct for LiveKit conferences. It contains a
 /// group of [Participant]s, each publishing and subscribing to [Track]s.
@@ -119,6 +122,29 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   // Agents
   final Map<String, DateTime> _transcriptionReceivedTimes = {};
 
+  // RPC Handlers
+  final Map<String, RpcRequestHandler> _rpcHandlers = {};
+
+  final Map<String, DataStreamController<lk_models.DataStream_Chunk>>
+      _byteStreamControllers = {};
+
+  final Map<String, DataStreamController<lk_models.DataStream_Chunk>>
+      _textStreamControllers = {};
+
+  final Map<String, ByteStreamHandler> _byteStreamHandlers = {};
+
+  final Map<String, TextStreamHandler> _textStreamHandlers = {};
+
+  // for testing
+  @internal
+  Map<String, RpcRequestHandler> get rpcHandlers => _rpcHandlers;
+
+  @internal
+  Map<String, TextStreamHandler> get textStreamHandlers => _textStreamHandlers;
+
+  @internal
+  Map<String, ByteStreamHandler> get byteStreamHandlers => _byteStreamHandlers;
+
   Room({
     @Deprecated('deprecated, please use connectOptions in room.connect()')
     ConnectOptions connectOptions = const ConnectOptions(),
@@ -140,6 +166,10 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       logger.finer('[RoomEvent] $event, will notifyListeners()');
       notifyListeners();
     });
+
+    _setupRpcListeners();
+
+    _setupDataStreamListeners();
 
     onDispose(() async {
       // clean up routine
@@ -235,6 +265,10 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
         logger.warning('could not fetch region settings $e');
       }));
     }
+
+    // configure audio for native platform
+    await NativeAudioManagement.start();
+
     try {
       await engine.connect(
         _regionUrl ?? url,
@@ -278,91 +312,6 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
   }
 
   void _setUpSignalListeners() => _signalListener
-    ..on<SignalJoinResponseEvent>((event) {
-      _roomInfo = event.response.room;
-      _name = event.response.room.name;
-      _metadata = event.response.room.metadata;
-      _serverVersion = event.response.serverVersion;
-      _serverRegion = event.response.serverRegion;
-
-      if (_isRecording != event.response.room.activeRecording) {
-        _isRecording = event.response.room.activeRecording;
-        emitWhenConnected(
-            RoomRecordingStatusChanged(activeRecording: _isRecording));
-      }
-
-      logger.fine('[Engine] Received JoinResponse, '
-          'serverVersion: ${event.response.serverVersion}');
-
-      _localParticipant ??= LocalParticipant(
-        room: this,
-        info: event.response.participant,
-      );
-
-      if (engine.fullReconnectOnNext) {
-        _localParticipant!.updateFromInfo(event.response.participant);
-      }
-
-      if (connectOptions.protocolVersion.index >= ProtocolVersion.v8.index &&
-          engine.fastConnectOptions != null &&
-          !engine.fullReconnectOnNext) {
-        var options = engine.fastConnectOptions!;
-
-        var audio = options.microphone;
-        bool audioEnabled = audio.enabled == true || audio.track != null;
-        if (audioEnabled) {
-          if (audio.track != null) {
-            _localParticipant!.publishAudioTrack(audio.track as LocalAudioTrack,
-                publishOptions: roomOptions.defaultAudioPublishOptions);
-          } else {
-            _localParticipant!.setMicrophoneEnabled(true,
-                audioCaptureOptions: roomOptions.defaultAudioCaptureOptions);
-          }
-        }
-
-        var video = options.camera;
-        bool videoEnabled = video.enabled == true || video.track != null;
-        if (videoEnabled) {
-          if (video.track != null) {
-            _localParticipant!.publishVideoTrack(video.track as LocalVideoTrack,
-                publishOptions: roomOptions.defaultVideoPublishOptions);
-          } else {
-            _localParticipant!.setCameraEnabled(true,
-                cameraCaptureOptions: roomOptions.defaultCameraCaptureOptions);
-          }
-        }
-
-        var screen = options.screen;
-        bool screenEnabled = screen.enabled == true || screen.track != null;
-        if (screenEnabled) {
-          if (screen.track != null) {
-            _localParticipant!.publishVideoTrack(
-                screen.track as LocalVideoTrack,
-                publishOptions: roomOptions.defaultVideoPublishOptions);
-          } else {
-            _localParticipant!.setScreenShareEnabled(true,
-                screenShareCaptureOptions:
-                    roomOptions.defaultScreenShareCaptureOptions);
-          }
-        }
-      }
-
-      for (final info in event.response.otherParticipants) {
-        logger.fine(
-            'Creating RemoteParticipant: sid = ${info.sid}(identity:${info.identity}) '
-            'tracks:${info.tracks.map((e) => e.sid)}');
-        _getOrCreateRemoteParticipant(info.identity, info);
-      }
-
-      if (e2eeManager != null && event.response.sifTrailer.isNotEmpty) {
-        e2eeManager!.keyProvider
-            .setSifTrailer(Uint8List.fromList(event.response.sifTrailer));
-      }
-
-      logger.fine('Room Connect completed');
-
-      events.emit(RoomConnectedEvent(room: this, metadata: _metadata));
-    })
     ..on<SignalParticipantUpdateEvent>(
         (event) => _onParticipantUpdateEvent(event.participants))
     ..on<SignalSpeakersChangedEvent>(
@@ -464,6 +413,91 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
     });
 
   void _setUpEngineListeners() => _engineListener
+    ..on<EngineJoinResponseEvent>((event) {
+      _roomInfo = event.response.room;
+      _name = event.response.room.name;
+      _metadata = event.response.room.metadata;
+      _serverVersion = event.response.serverVersion;
+      _serverRegion = event.response.serverRegion;
+
+      if (_isRecording != event.response.room.activeRecording) {
+        _isRecording = event.response.room.activeRecording;
+        emitWhenConnected(
+            RoomRecordingStatusChanged(activeRecording: _isRecording));
+      }
+
+      logger.fine('[Engine] Received JoinResponse, '
+          'serverVersion: ${event.response.serverVersion}');
+
+      _localParticipant ??= LocalParticipant(
+        room: this,
+        info: event.response.participant,
+      );
+
+      if (engine.fullReconnectOnNext) {
+        _localParticipant!.updateFromInfo(event.response.participant);
+      }
+
+      if (connectOptions.protocolVersion.index >= ProtocolVersion.v8.index &&
+          engine.fastConnectOptions != null &&
+          !engine.fullReconnectOnNext) {
+        var options = engine.fastConnectOptions!;
+
+        var audio = options.microphone;
+        bool audioEnabled = audio.enabled == true || audio.track != null;
+        if (audioEnabled) {
+          if (audio.track != null) {
+            _localParticipant!.publishAudioTrack(audio.track as LocalAudioTrack,
+                publishOptions: roomOptions.defaultAudioPublishOptions);
+          } else {
+            _localParticipant!.setMicrophoneEnabled(true,
+                audioCaptureOptions: roomOptions.defaultAudioCaptureOptions);
+          }
+        }
+
+        var video = options.camera;
+        bool videoEnabled = video.enabled == true || video.track != null;
+        if (videoEnabled) {
+          if (video.track != null) {
+            _localParticipant!.publishVideoTrack(video.track as LocalVideoTrack,
+                publishOptions: roomOptions.defaultVideoPublishOptions);
+          } else {
+            _localParticipant!.setCameraEnabled(true,
+                cameraCaptureOptions: roomOptions.defaultCameraCaptureOptions);
+          }
+        }
+
+        var screen = options.screen;
+        bool screenEnabled = screen.enabled == true || screen.track != null;
+        if (screenEnabled) {
+          if (screen.track != null) {
+            _localParticipant!.publishVideoTrack(
+                screen.track as LocalVideoTrack,
+                publishOptions: roomOptions.defaultVideoPublishOptions);
+          } else {
+            _localParticipant!.setScreenShareEnabled(true,
+                screenShareCaptureOptions:
+                    roomOptions.defaultScreenShareCaptureOptions);
+          }
+        }
+      }
+
+      for (final info in event.response.otherParticipants) {
+        logger.fine(
+            'Creating RemoteParticipant: sid = ${info.sid}(identity:${info.identity}) '
+            'tracks:${info.tracks.map((e) => e.sid)}');
+        _getOrCreateRemoteParticipant(info.identity, info);
+      }
+
+      if (e2eeManager != null && event.response.sifTrailer.isNotEmpty) {
+        e2eeManager!.keyProvider
+            .setSifTrailer(Uint8List.fromList(event.response.sifTrailer));
+      }
+
+      logger.fine('Room Connect completed');
+
+      events.emit(RoomConnectedEvent(room: this, metadata: _metadata));
+    })
     ..on<EngineResumedEvent>((event) async {
       // re-send tracks permissions
       localParticipant?.sendTrackSubscriptionPermissions();
@@ -518,7 +552,8 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
       notifyListeners();
     })
     ..on<EngineDisconnectedEvent>((event) async {
-      if (!engine.fullReconnectOnNext) {
+      if (!engine.fullReconnectOnNext ||
+          event.reason == DisconnectReason.clientInitiated) {
         await _cleanUp(disposeLocalParticipant: false);
         events.emit(RoomDisconnectedEvent(reason: event.reason));
         notifyListeners();
@@ -589,15 +624,19 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
 
   /// Disconnects from the room, notifying server of disconnection.
   Future<void> disconnect() async {
+    bool isPendingReconnect = engine.isPendingReconnect;
     if (engine.isClosed &&
+        !isPendingReconnect &&
         engine.connectionState == ConnectionState.disconnected) {
-      events.emit(RoomDisconnectedEvent(reason: DisconnectReason.unknown));
+      logger.warning('Engine is already closed');
       return;
     }
     await engine.disconnect();
-   await _engineListener.waitFor<EngineDisconnectedEvent>(
-       duration: const Duration(seconds: 10));
-    await _cleanUp(disposeLocalParticipant: false);
+    if (!isPendingReconnect) {
+      await _engineListener.waitFor<EngineDisconnectedEvent>(
+          duration: const Duration(seconds: 10));
+    }
+    await _cleanUp();
   }
 
   Future<void> setE2EEEnabled(bool enabled) async {
@@ -659,6 +698,14 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
     // trigger change notifier only if list of participants membership is changed
     var hasChanged = false;
     for (final info in updates) {
+      // The local participant is not ready yet, waiting for the
+      // `RoomConnectedEvent` to create the local participant.
+      if (_localParticipant == null) {
+        await events.waitFor<RoomConnectedEvent>(
+          duration: const Duration(seconds: 10),
+        );
+      }
+
       if (localParticipant?.identity == info.identity) {
         await localParticipant?.updateFromInfo(info);
         continue;
@@ -831,14 +878,11 @@ class Room extends DisposableChangeNotifier with EventsEmittable<RoomEvent> {
 
   void _onDataMessageEvent(EngineDataPacketReceivedEvent dataPacketEvent) {
     // participant may be null if data is sent from Server-API
-    final senderSid = dataPacketEvent.packet.participantSid;
     RemoteParticipant? senderParticipant;
-    if (senderSid.isNotEmpty) {
-      senderParticipant =
-          _getRemoteParticipantBySid(dataPacketEvent.packet.participantSid);
+    if (dataPacketEvent.identity.isNotEmpty) {
+      senderParticipant = getParticipantByIdentity(dataPacketEvent.identity)
+          as RemoteParticipant?;
     }
-
-    // participant.delegate?.onDataReceived(participant, event.packet.payload);
 
     final event = DataReceivedEvent(
       participant: senderParticipant,
@@ -918,6 +962,8 @@ extension RoomPrivateMethods on Room {
 
     // clean up engine
     await engine.cleanUp();
+
+    await NativeAudioManagement.stop();
 
     // reset params
     _name = null;
@@ -1052,22 +1098,39 @@ extension RoomHardwareManagementMethods on Room {
   /// Set video input device.
   Future<void> setVideoInputDevice(MediaDevice device) async {
     final track = localParticipant?.videoTrackPublications.firstOrNull?.track;
-    if (track == null) return;
-    if (selectedVideoInputDeviceId != device.deviceId) {
-      await track.switchCamera(device.deviceId);
-      Hardware.instance.selectedVideoInput = device;
-    }
+
+    final currentDeviceId =
+        engine.roomOptions.defaultCameraCaptureOptions.deviceId;
+
+    // Always update roomOptions so future tracks use the correct device
     engine.roomOptions = engine.roomOptions.copyWith(
-      defaultCameraCaptureOptions:
-          roomOptions.defaultCameraCaptureOptions.copyWith(
-        deviceId: device.deviceId,
-      ),
+      defaultCameraCaptureOptions: roomOptions.defaultCameraCaptureOptions
+          .copyWith(deviceId: device.deviceId),
     );
+
+    try {
+      if (track != null && selectedVideoInputDeviceId != device.deviceId) {
+        await track.switchCamera(device.deviceId);
+        Hardware.instance.selectedVideoInput = device;
+      }
+    } catch (e) {
+      // if the switching actually fails, reset it to the previous deviceId
+      engine.roomOptions = engine.roomOptions.copyWith(
+        defaultCameraCaptureOptions: roomOptions.defaultCameraCaptureOptions
+            .copyWith(deviceId: currentDeviceId),
+      );
+    }
   }
 
-  Future<void> setSpeakerOn(bool speakerOn) async {
-    if (lkPlatformIs(PlatformType.iOS) || lkPlatformIs(PlatformType.android)) {
-      await Hardware.instance.setSpeakerphoneOn(speakerOn);
+  /// [speakerOn] set speakerphone on or off, by default wired/bluetooth headsets will still
+  /// be prioritized even if set to true.
+  /// [forceSpeakerOutput] if true, will force speaker output even if headphones
+  /// or bluetooth is connected, only supported on iOS for now
+  Future<void> setSpeakerOn(bool speakerOn,
+      {bool forceSpeakerOutput = false}) async {
+    if (lkPlatformIsMobile()) {
+      await Hardware.instance
+          .setSpeakerphoneOn(speakerOn, forceSpeakerOutput: forceSpeakerOutput);
       engine.roomOptions = engine.roomOptions.copyWith(
         defaultAudioOutputOptions:
             roomOptions.defaultAudioOutputOptions.copyWith(
@@ -1081,8 +1144,7 @@ extension RoomHardwareManagementMethods on Room {
   @internal
   Future<void> applyAudioSpeakerSettings() async {
     if (roomOptions.defaultAudioOutputOptions.speakerOn != null) {
-      if (lkPlatformIs(PlatformType.iOS) ||
-          lkPlatformIs(PlatformType.android)) {
+      if (lkPlatformIsMobile()) {
         await Hardware.instance.setSpeakerphoneOn(
             roomOptions.defaultAudioOutputOptions.speakerOn!);
       }
@@ -1121,5 +1183,206 @@ extension RoomHardwareManagementMethods on Room {
     }
     _audioEnabled = false;
     events.emit(const AudioPlaybackStatusChanged(isPlaying: false));
+  }
+}
+
+extension RoomRPCMethods on Room {
+  void _setupRpcListeners() {
+    // listen for incoming requests
+    _engineListener
+      ..on<EngineRPCRequestReceivedEvent>((event) async {
+        final request = event.request;
+        await _localParticipant?.handleIncomingRpcRequest(
+          event.identity,
+          request.id,
+          request.method,
+          request.payload,
+          request.responseTimeoutMs,
+          request.version,
+        );
+      })
+      ..on<EngineRPCAckReceivedEvent>((event) {
+        _localParticipant?.handleIncomingRpcAck(event.requestId);
+      })
+      ..on<EngineRPCResponseReceivedEvent>((event) {
+        String? payload;
+        RpcError? error;
+
+        if (event.payload.isNotEmpty) {
+          payload = event.response.payload;
+        } else if (event.error != null) {
+          error = RpcError.fromProto(event.error!);
+        }
+        _localParticipant?.handleIncomingRpcResponse(
+            event.requestId, payload, error);
+      });
+  }
+
+  /// Register a handler for incoming RPC requests.
+  /// @param method, the method name to listen for.
+  /// When a request with this method name is received, the handler will be called.
+  /// The handler should return a string payload to send back to the caller.
+  /// If the handler returns null, an error will be sent back to the caller.
+  void registerRpcMethod(String method, RpcRequestHandler handler) {
+    if (rpcHandlers.containsKey(method)) {
+      throw Exception('Method $method already registered');
+    }
+    rpcHandlers[method] = handler;
+  }
+
+  /// Unregister a handler for incoming RPC requests.
+  /// @param method, the method name to unregister.
+  void unregisterRpcMethod(String method) {
+    rpcHandlers.remove(method);
+  }
+}
+
+extension DataStreamRoomMethods on Room {
+  void _setupDataStreamListeners() {
+    _engineListener
+      ..on<EngineDataStreamHeaderEvent>((event) {
+        handleStreamHeader(event.header, event.identity);
+      })
+      ..on<EngineDataStreamChunkEvent>((event) async {
+        handleStreamChunk(event.chunk);
+      })
+      ..on<EngineDataStreamTrailerEvent>((event) {
+        handleStreamTrailer(event.trailer);
+      });
+  }
+
+  void registerTextStreamHandler(String topic, TextStreamHandler callback) {
+    if (_textStreamHandlers[topic] != null) {
+      throw Exception(
+          'A text stream handler for topic "${topic}" has already been set.');
+    }
+    _textStreamHandlers[topic] = callback;
+  }
+
+  void unregisterTextStreamHandler(String topic) {
+    _textStreamHandlers.remove(topic);
+  }
+
+  void registerByteStreamHandler(String topic, ByteStreamHandler callback) {
+    if (_byteStreamHandlers[topic] != null) {
+      throw Exception(
+          'A byte stream handler for topic "${topic}" has already been set.');
+    }
+    _byteStreamHandlers[topic] = callback;
+  }
+
+  void unregisterByteStreamHandler(String topic) {
+    _byteStreamHandlers.remove(topic);
+  }
+
+  Future<void> handleStreamHeader(lk_models.DataStream_Header streamHeader,
+      String participantIdentity) async {
+    if (streamHeader.hasByteHeader()) {
+      final streamHandlerCallback = _byteStreamHandlers[streamHeader.topic];
+
+      if (streamHandlerCallback == null) {
+        logger.info(
+            'ignoring incoming byte stream due to no handler for topic ${streamHeader.topic}');
+        return;
+      }
+
+      var info = ByteStreamInfo(
+        id: streamHeader.streamId,
+        name: streamHeader.byteHeader.name,
+        mimeType: streamHeader.mimeType,
+        size: streamHeader.hasTotalLength()
+            ? streamHeader.totalLength.toInt()
+            : 0,
+        topic: streamHeader.topic,
+        timestamp: streamHeader.timestamp.toInt(),
+        attributes: streamHeader.attributes,
+      );
+
+      var streamController = DataStreamController<lk_models.DataStream_Chunk>(
+        info: info,
+        streamController: StreamController<lk_models.DataStream_Chunk>(),
+        startTime: DateTime.now().millisecondsSinceEpoch,
+      );
+
+      _byteStreamControllers[streamHeader.streamId] = streamController;
+
+      streamHandlerCallback(
+        ByteStreamReader(
+            info, streamController, streamHeader.totalLength.toInt()),
+        participantIdentity,
+      );
+    } else if (streamHeader.hasTextHeader()) {
+      final streamHandlerCallback = _textStreamHandlers[streamHeader.topic];
+
+      if (streamHandlerCallback == null) {
+        logger.warning(
+            'ignoring incoming text stream due to no handler for topic ${streamHeader.topic}');
+        return;
+      }
+
+      var info = TextStreamInfo(
+        id: streamHeader.streamId,
+        mimeType: streamHeader.mimeType,
+        size: streamHeader.hasTotalLength()
+            ? streamHeader.totalLength.toInt()
+            : 0,
+        topic: streamHeader.topic,
+        timestamp: streamHeader.timestamp.toInt(),
+        attributes: streamHeader.attributes,
+      );
+
+      var streamController = DataStreamController<lk_models.DataStream_Chunk>(
+        info: info,
+        streamController: StreamController<lk_models.DataStream_Chunk>(),
+        startTime: DateTime.now().millisecondsSinceEpoch,
+      );
+
+      _textStreamControllers[streamHeader.streamId] = streamController;
+
+      streamHandlerCallback(
+        TextStreamReader(
+            info, streamController, streamHeader.totalLength.toInt()),
+        participantIdentity,
+      );
+    }
+  }
+
+  void handleStreamChunk(lk_models.DataStream_Chunk chunk) {
+    final fileBuffer = _byteStreamControllers[chunk.streamId];
+    if (fileBuffer != null) {
+      if (chunk.content.isNotEmpty) {
+        fileBuffer.write(chunk);
+      }
+    }
+    final textBuffer = _textStreamControllers[chunk.streamId];
+    if (textBuffer != null) {
+      if (chunk.content.isNotEmpty) {
+        textBuffer.write(chunk);
+      }
+    }
+  }
+
+  void handleStreamTrailer(lk_models.DataStream_Trailer trailer) {
+    final textBuffer = _textStreamControllers[trailer.streamId];
+    if (textBuffer != null) {
+      textBuffer.info.attributes = {
+        ...textBuffer.info.attributes,
+        ...trailer.attributes,
+      };
+      textBuffer.close();
+      _textStreamControllers.remove(trailer.streamId);
+    }
+
+    final fileBuffer = _byteStreamControllers[trailer.streamId];
+    if (fileBuffer != null) {
+      {
+        fileBuffer.info.attributes = {
+          ...fileBuffer.info.attributes,
+          ...trailer.attributes
+        };
+        fileBuffer.close();
+        _byteStreamControllers.remove(trailer.streamId);
+      }
+    }
   }
 }

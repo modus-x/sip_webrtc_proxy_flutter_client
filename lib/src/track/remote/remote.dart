@@ -20,10 +20,13 @@ import '../../types/other.dart';
 import '../track.dart';
 
 abstract class RemoteTrack extends Track {
-  RemoteTrack(TrackType kind, TrackSource source, rtc.MediaStream stream,
-      rtc.MediaStreamTrack track,
-      {rtc.RTCRtpReceiver? receiver})
-      : super(
+  RemoteTrack(
+    TrackType kind,
+    TrackSource source,
+    rtc.MediaStream stream,
+    rtc.MediaStreamTrack track, {
+    rtc.RTCRtpReceiver? receiver,
+  }) : super(
           kind,
           source,
           stream,
@@ -43,7 +46,7 @@ abstract class RemoteTrack extends Track {
   @override
   Future<bool> stop() async {
     final didStop = await super.stop();
-    if (didStop) {
+    if (didStop || !muted) {
       await disable();
     }
     return didStop;

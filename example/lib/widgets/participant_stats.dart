@@ -55,7 +55,9 @@ class _ParticipantStatsWidgetState extends State<ParticipantStatsWidget> {
       listener.on<VideoReceiverStatsEvent>((event) {
         Map<String, String> stats = {};
         setState(() {
-          stats['rx'] = '${event.currentBitrate.toInt()} kpbs';
+          if (!event.currentBitrate.isNaN) {
+            stats['rx'] = '${event.currentBitrate.toInt()} kpbs';
+          }
           if (event.stats.mimeType != null) {
             stats['codec'] =
                 '${event.stats.mimeType!.split('/')[1]}/${event.stats.clockRate}';
@@ -148,7 +150,7 @@ class _ParticipantStatsWidgetState extends State<ParticipantStatsWidget> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: Colors.black.withOpacity(0.3),
+      color: Colors.black.withValues(alpha: 0.3),
       padding: const EdgeInsets.symmetric(
         vertical: 8,
         horizontal: 8,

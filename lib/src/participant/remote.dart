@@ -31,8 +31,8 @@ import '../track/remote/video.dart';
 import '../types/other.dart';
 import 'participant.dart';
 
+/// Represents other participant in the [Room].
 class RemoteParticipant extends Participant<RemoteTrackPublication> {
-
   @internal
   RemoteParticipant({
     required Room room,
@@ -195,7 +195,6 @@ class RemoteParticipant extends Participant<RemoteTrackPublication> {
   @internal
   Future<bool> updateFromInfo(lk_models.ParticipantInfo info) async {
     logger.fine('RemoteParticipant.updateFromInfo(info: $info)');
-
     if (!await super.updateFromInfo(info)) {
       //return false;
     }

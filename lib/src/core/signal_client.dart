@@ -36,7 +36,6 @@ import '../support/disposable.dart';
 import '../support/platform.dart';
 import '../support/websocket.dart';
 import '../types/other.dart';
-import '../types/video_dimensions.dart';
 import '../utils.dart';
 
 class SignalClient extends Disposable with EventsEmittable<SignalEvent> {
@@ -59,7 +58,7 @@ class SignalClient extends Disposable with EventsEmittable<SignalEvent> {
   String? participantSid;
 
   List<ConnectivityResult> _connectivityResult = [];
-  StreamSubscription<List<ConnectivityResult>>? connectivitySubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   Future<bool> networkIsAvailable() async {
     // Skip check for web or flutter test
@@ -79,9 +78,11 @@ class SignalClient extends Disposable with EventsEmittable<SignalEvent> {
 
     onDispose(() async {
       await cleanUp();
+      await events.cancelAll();
       await events.dispose();
       if (!kIsWeb && !lkPlatformIsTest()) {
-        await connectivitySubscription?.cancel();
+        await _connectivitySubscription?.cancel();
+        _connectivitySubscription = null;
       }
     });
   }
@@ -96,7 +97,8 @@ class SignalClient extends Disposable with EventsEmittable<SignalEvent> {
   }) async {
     if (!kIsWeb && !lkPlatformIsTest()) {
       _connectivityResult = await Connectivity().checkConnectivity();
-      connectivitySubscription = Connectivity()
+      await _connectivitySubscription?.cancel();
+      _connectivitySubscription = Connectivity()
           .onConnectivityChanged
           .listen((List<ConnectivityResult> result) {
         if (_connectivityResult != result) {
@@ -116,8 +118,6 @@ class SignalClient extends Disposable with EventsEmittable<SignalEvent> {
 
       if (_connectivityResult.contains(ConnectivityResult.none)) {
         logger.warning('no internet connection');
-        events.emit(SignalDisconnectedEvent(
-            reason: DisconnectReason.noInternetConnection));
         throw ConnectException('no internet connection',
             reason: ConnectionErrorReason.InternalError, statusCode: 503);
       }
@@ -315,6 +315,7 @@ class SignalClient extends Disposable with EventsEmittable<SignalEvent> {
       case lk_rtc.SignalResponse_Message.subscribedQualityUpdate:
         events.emit(SignalSubscribedQualityUpdatedEvent(
           trackSid: msg.subscribedQualityUpdate.trackSid,
+          // ignore: deprecated_member_use_from_same_package
           subscribedQualities: msg.subscribedQualityUpdate.subscribedQualities,
           subscribedCodecs: msg.subscribedQualityUpdate.subscribedCodecs,
         ));
@@ -435,55 +436,10 @@ extension SignalClientRequests on SignalClient {
       ));
 
   @internal
-  void sendAddTrack({
-    required String cid,
-    required String name,
-    required lk_models.TrackType type,
-    required lk_models.TrackSource source,
-    required lk_models.Encryption_Type encryptionType,
-    VideoDimensions? dimensions,
-    bool? dtx,
-    Iterable<lk_models.VideoLayer>? videoLayers,
-    Iterable<lk_rtc.SimulcastCodec>? simulcastCodecs,
-    String? sid,
-    String? stream,
-    bool? disableRed,
-  }) {
-    final req = lk_rtc.AddTrackRequest(
-      cid: cid,
-      name: name,
-      type: type,
-      source: source,
-      encryption: encryptionType,
-      simulcastCodecs: simulcastCodecs,
-      sid: sid,
-      muted: false,
-      stream: stream,
-      disableRed: disableRed,
-    );
-
-    if (type == lk_models.TrackType.VIDEO) {
-      // video specific
-      if (dimensions != null) {
-        req.width = dimensions.width;
-        req.height = dimensions.height;
-      }
-      if (videoLayers != null && videoLayers.isNotEmpty) {
-        req.layers
-          ..clear()
-          ..addAll(videoLayers);
-      }
-    }
-
-    if (type == lk_models.TrackType.AUDIO && dtx != null) {
-      // audio specific
-      req.disableDtx = !dtx;
-    }
-
-    _sendRequest(lk_rtc.SignalRequest(
-      addTrack: req,
-    ));
-  }
+  void sendAddTrack(lk_rtc.AddTrackRequest req) =>
+      _sendRequest(lk_rtc.SignalRequest(
+        addTrack: req,
+      ));
 
   @internal
   void sendUpdateLocalMetadata(lk_rtc.UpdateParticipantMetadata metadata) =>

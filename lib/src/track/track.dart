@@ -14,6 +14,8 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:meta/meta.dart';
 import 'package:uuid/uuid.dart';
@@ -43,6 +45,8 @@ abstract class Track extends DisposableChangeNotifier
   // read only
   rtc.MediaStreamTrack get mediaStreamTrack => _mediaStreamTrack;
   rtc.MediaStreamTrack _mediaStreamTrack;
+
+  rtc.MediaStreamTrack? _originalTrack;
 
   String? sid;
   rtc.RTCRtpTransceiver? transceiver;
@@ -110,6 +114,8 @@ abstract class Track extends DisposableChangeNotifier
 
     startMonitor();
 
+    await onStarted();
+
     _active = true;
     return true;
   }
@@ -125,7 +131,18 @@ abstract class Track extends DisposableChangeNotifier
 
     stopMonitor();
 
+    await onStopped();
+
     logger.fine('$objectId.stop()');
+
+    if (!kIsWeb) {
+      await mediaStreamTrack.stop();
+    }
+
+    if (_originalTrack != null) {
+      await _originalTrack?.stop();
+      _originalTrack = null;
+    }
 
     _active = false;
     return true;
@@ -158,7 +175,14 @@ abstract class Track extends DisposableChangeNotifier
 
   Timer? _monitorTimer;
 
+  @internal
   Future<bool> monitorStats();
+
+  @internal
+  Future<void> onStarted() async {}
+
+  @internal
+  Future<void> onStopped() async {}
 
   @internal
   void startMonitor() {
@@ -202,5 +226,11 @@ abstract class Track extends DisposableChangeNotifier
       track: this,
       stream: stream,
     ));
+  }
+
+  @internal
+  void setProcessedTrack(rtc.MediaStreamTrack track) {
+    _originalTrack = _mediaStreamTrack;
+    _mediaStreamTrack = track;
   }
 }

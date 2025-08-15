@@ -5,12 +5,9 @@ import 'package:livekit_client/livekit_client.dart';
 import 'package:livekit_example/control_room_api/api.swagger.dart';
 import 'package:livekit_example/control_room_api/control_room_api.dart';
 import 'package:livekit_example/pages/room.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:dropdown_button2/dropdown_button2.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:livekit_example/exts.dart';
 
-import '../models/sip_control.pb.dart';
+import '../models/sip_signalling.pb.dart';
 
 class ConnectPage extends StatefulWidget {
   //
@@ -25,28 +22,16 @@ class ConnectPage extends StatefulWidget {
 class _ConnectPageState extends State<ConnectPage> {
   final formKey = GlobalKey<FormState>();
 
-  final _username = TextEditingController(text: "n.plaksin");
-  final _password = TextEditingController(text: "32DaBGK0");
-  final _domain = TextEditingController(text: "SMoscow007.14.rt.ru");
+  final _username = TextEditingController(text: 'n.plaksin');
+  final _password = TextEditingController(text: '!QAZxsw2');
+  final _domain = TextEditingController(text: '192.168.92.43');
+  final _hash = TextEditingController(text: '');
 
   bool _busy = false;
 
   bool _passwordHidden = true;
 
   bool pressedEnter = false;
-
-  List<MediaDevice> _audioInputs = [];
-  List<MediaDevice> _videoInputs = [];
-  StreamSubscription? _subscription;
-
-  bool _enableVideo = false;
-  bool _enableAudio = true;
-  LocalAudioTrack? _audioTrack;
-  LocalVideoTrack? _videoTrack;
-
-  MediaDevice? _selectedVideoDevice;
-  MediaDevice? _selectedAudioDevice;
-  VideoParameters _selectedVideoParameters = VideoParametersPresets.h720_169;
 
   @override
   void initState() {
@@ -59,8 +44,6 @@ class _ConnectPageState extends State<ConnectPage> {
     _password.addListener(() {
       pressedEnter = false;
     });
-
-    _checkPermissions();
   }
 
   @override
@@ -68,108 +51,12 @@ class _ConnectPageState extends State<ConnectPage> {
     _username.dispose();
     _password.dispose();
     _domain.dispose();
-    _subscription?.cancel();
     super.dispose();
-  }
-
-  Future<void> _checkPermissions() async {
-    // 1. Request the two permissions together
-    final statuses = await [
-      Permission.microphone,
-    ].request();
-
-    // 2. If at least one is permanently denied, just bail out early
-    if (statuses.values.any((s) => s.isPermanentlyDenied)) {
-      debugPrint('Mic/Camera permission permanently denied');
-      return;
-    }
-
-    // 3. Once the dialog closes, permissions have been resolved – now refresh
-    final devices = await Hardware.instance.enumerateDevices();
-    if (mounted) _loadDevices(devices); // <- re-populates the dropdowns
   }
 
   @override
   void deactivate() {
-    _subscription?.cancel();
     super.deactivate();
-  }
-
-  void _loadDevices(List<MediaDevice> devices) async {
-    _audioInputs = devices.where((d) => d.kind == 'audioinput').toList();
-
-    if (_audioInputs.isNotEmpty) {
-      if (_selectedAudioDevice == null) {
-        _selectedAudioDevice = _audioInputs.first;
-        Future.delayed(const Duration(milliseconds: 100), () async {
-          await _changeLocalAudioTrack();
-          setState(() {});
-        });
-      }
-    }
-
-    if (_videoInputs.isNotEmpty) {
-      if (_selectedVideoDevice == null) {
-        _selectedVideoDevice = _videoInputs.first;
-        Future.delayed(const Duration(milliseconds: 100), () async {
-          await _changeLocalVideoTrack();
-          setState(() {});
-        });
-      }
-    }
-    setState(() {});
-  }
-
-  Future<void> _setEnableVideo(value) async {
-    _enableVideo = value;
-    if (!_enableVideo) {
-      await _videoTrack?.stop();
-      _videoTrack = null;
-    } else {
-      await _changeLocalVideoTrack();
-    }
-    setState(() {});
-  }
-
-  Future<void> _setEnableAudio(value) async {
-    _enableAudio = value;
-    if (!_enableAudio) {
-      await _audioTrack?.stop();
-      _audioTrack = null;
-    } else {
-      await _changeLocalAudioTrack();
-    }
-    setState(() {});
-  }
-
-  Future<void> _changeLocalAudioTrack() async {
-    if (_audioTrack != null) {
-      await _audioTrack!.stop();
-      _audioTrack = null;
-    }
-
-    if (_selectedAudioDevice != null) {
-      _audioTrack = await LocalAudioTrack.create(AudioCaptureOptions(
-        deviceId: _selectedAudioDevice!.deviceId,
-      ));
-      await _audioTrack!.start();
-    }
-  }
-
-  Future<void> _changeLocalVideoTrack() async {
-    if (_videoTrack != null) {
-      await _videoTrack!.stop();
-      _videoTrack = null;
-    }
-
-    if (_selectedVideoDevice != null) {
-      _videoTrack =
-          await LocalVideoTrack.createCameraTrack(CameraCaptureOptions(
-        deviceId: _selectedVideoDevice!.deviceId,
-        params: _selectedVideoParameters,
-      ));
-      await _videoTrack!.start();
-    }
   }
 
   _join(BuildContext context) async {
@@ -237,28 +124,28 @@ class _ConnectPageState extends State<ConnectPage> {
       await room.prepareConnection(
           controlRoom.livekitUrl, controlRoom.accessToken);
 
-      // Try to connect to the room
+      // Try to connect to the room without publuishing ANY tracks
       // This will throw an Exception if it fails for any reason.
       await room.connect(
         controlRoom.livekitUrl,
         controlRoom.accessToken,
-        fastConnectOptions: FastConnectOptions(
-          microphone: TrackOption(track: _audioTrack),
-          camera: TrackOption(track: _videoTrack),
-        ),
       );
 
-      // TODO: remove this, await for webhook recevied
-      await Future.delayed(const Duration(seconds: 2));
+      SipRegister sipRegisterRequest;
+      if (_hash.text.isNotEmpty) {
+        sipRegisterRequest = SipRegister(
+          hash: _hash.text,
+        );
+      } else {
+        sipRegisterRequest = SipRegister(
+          password: _password.text,
+        );
+      }
 
-      // Immediately send SipRegister command upon connection
-      final sipRegisterRequest = SipRegister(
-        password: _password.text,
-      );
-      final command = SipControlCommand(register: sipRegisterRequest, commandId: 'register');
+      final command = SipControlCommand(
+          register: sipRegisterRequest, commandId: 'register');
       final buffer = command.writeToBuffer();
       final participant = room.localParticipant;
-
 
       var registerResultFuture = registerResultStream.stream.first;
       await participant?.publishData(
@@ -281,8 +168,7 @@ class _ConnectPageState extends State<ConnectPage> {
           await context.showErrorDialog(
               'Cannot register: sip code ${result.code}, message ${result.message}');
         }
-      }
-      else {
+      } else {
         await context.showErrorDialog(
             'Cannot register, internal error: ${registerResult.error}');
       }
@@ -361,102 +247,9 @@ class _ConnectPageState extends State<ConnectPage> {
                             setState(() => _passwordHidden = !_passwordHidden),
                       ),
                     ),
+                    _buildInput(controller: _hash, hint: 'Хеш'),
+                    const SizedBox(height: 24),
                     const SizedBox(height: 40),
-
-                    // ── CAMERA PREVIEW ──────────────────────────────────────
-                    if (_enableVideo)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Container(
-                          height: 240,
-                          color: Colors.black54,
-                          alignment: Alignment.center,
-                          child: _videoTrack != null
-                              ? VideoTrackRenderer(
-                                  _videoTrack!,
-                                  fit: RTCVideoViewObjectFit
-                                      .RTCVideoViewObjectFitContain,
-                                )
-                              : const Icon(Icons.videocam_off,
-                                  color: Color(0xFF2FA5F9), size: 60),
-                        ),
-                      ),
-                    if (_enableVideo) const SizedBox(height: 24),
-
-                    // ── CAMERA SWITCH & DROPS ───────────────────────────────
-                    if (_enableVideo)
-                      _buildSwitchRow(
-                        label: 'Камера',
-                        value: _enableVideo,
-                        onChanged: _setEnableVideo,
-                      ),
-                    if (_enableVideo) const SizedBox(height: 16),
-                    if (_enableVideo)
-                      _buildDropdown<MediaDevice>(
-                        value: _selectedVideoDevice,
-                        hint: 'Выберите камеру',
-                        items: _videoInputs
-                            .map((e) => DropdownMenuItem(
-                                  value: e,
-                                  child: Text(e.label),
-                                ))
-                            .toList(),
-                        onChanged: (d) async {
-                          _selectedVideoDevice = d;
-                          await _changeLocalVideoTrack();
-                          setState(() {});
-                        },
-                      ),
-                    if (_enableVideo) const SizedBox(height: 16),
-                    if (_enableVideo)
-                      _buildDropdown<VideoParameters>(
-                        value: _selectedVideoParameters,
-                        hint: 'Разрешение видео',
-                        items: [
-                          VideoParametersPresets.h480_43,
-                          VideoParametersPresets.h540_169,
-                          VideoParametersPresets.h720_169,
-                          VideoParametersPresets.h1080_169,
-                        ]
-                            .map((e) => DropdownMenuItem(
-                                  value: e,
-                                  child: Text(
-                                      '${e.dimensions.width}×${e.dimensions.height}'),
-                                ))
-                            .toList(),
-                        onChanged: (p) async {
-                          _selectedVideoParameters = p!;
-                          await _changeLocalVideoTrack();
-                          setState(() {});
-                        },
-                      ),
-                    if (_enableVideo) const SizedBox(height: 24),
-
-                    // ── MIC SWITCH & DROPS ─────────────────────────────────
-                    // if (_enableAudio)
-                    //   _buildSwitchRow(
-                    //     label: 'Микрофон',
-                    //     value: _enableAudio,
-                    //     onChanged: _setEnableAudio,
-                    //   ),
-                    // if (_enableAudio) const SizedBox(height: 16),
-                    if (_enableAudio)
-                      _buildDropdown<MediaDevice>(
-                        value: _selectedAudioDevice,
-                        hint: 'Выберите микрофон',
-                        items: _audioInputs
-                            .map((e) => DropdownMenuItem(
-                                  value: e,
-                                  child: Text(e.label),
-                                ))
-                            .toList(),
-                        onChanged: (d) async {
-                          _selectedAudioDevice = d;
-                          await _changeLocalAudioTrack();
-                          setState(() {});
-                        },
-                      ),
-                    if (_enableAudio) const SizedBox(height: 56),
 
                     // ── JOIN BUTTON ────────────────────────────────────────
                     SizedBox(
@@ -529,63 +322,5 @@ class _ConnectPageState extends State<ConnectPage> {
             borderSide: const BorderSide(color: Color(0xFF2FA5F9)),
           ),
         ),
-      );
-
-  // Creates the white, rounded 56-px-high frame used for every input control.
-  Widget _fieldFrame({required Widget child}) => Container(
-        height: 56,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFFDFDFDF)),
-        ),
-        child: child,
-      );
-
-// Uniform dropdown that looks like a TextField.
-  Widget _buildDropdown<T>({
-    required T? value,
-    required List<DropdownMenuItem<T>> items,
-    required ValueChanged<T?> onChanged,
-    String? hint,
-  }) =>
-      _fieldFrame(
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton2<T>(
-            isExpanded: true,
-            value: value,
-            items: items,
-            hint: hint != null ? Text(hint) : null,
-            onChanged: onChanged,
-            buttonStyleData: const ButtonStyleData(
-                height: double.infinity, width: double.infinity),
-            dropdownStyleData: DropdownStyleData(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(6),
-              ),
-            ),
-            menuItemStyleData: const MenuItemStyleData(height: 40),
-          ),
-        ),
-      );
-
-// Label + switch row aligned to the field-edges.
-  Widget _buildSwitchRow({
-    required String label,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) =>
-      Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          Switch(
-            value: value,
-            activeColor: const Color(0xFF2FA5F9),
-            onChanged: onChanged,
-          ),
-        ],
       );
 }

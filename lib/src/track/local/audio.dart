@@ -133,11 +133,17 @@ class LocalAudioTrack extends LocalTrack
     options ??= const AudioCaptureOptions();
     final stream = await LocalTrack.createStream(options);
 
-    return LocalAudioTrack(
+    var track = LocalAudioTrack(
       TrackSource.microphone,
       stream,
       stream.getAudioTracks().first,
       options,
     );
+
+    if (options.processor != null) {
+      await track.setProcessor(options.processor);
+    }
+
+    return track;
   }
 }
